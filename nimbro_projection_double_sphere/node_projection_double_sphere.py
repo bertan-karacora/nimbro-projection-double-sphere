@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 
@@ -6,17 +8,12 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber as Subscribe
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, ReliabilityPolicy, QoSProfile
-from rcl_interfaces.msg import FloatingPointRange, ParameterDescriptor, ParameterType
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField, RegionOfInterest
-import sensor_msgs_py.point_cloud2 as pc2_py
-from std_msgs.msg import Header
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
-
 import nimbro_utils.compat.point_cloud2 as point_cloud2
-import nimbro_utils.geometry as utils_geometry
 import nimbro_utils.node as utils_node
 from nimbro_utils.parameter_handler import ParameterHandler
 from nimbro_utils.tf_oracle import TFOracle
@@ -38,7 +35,6 @@ class NodeProjectionDoubleSphere(Node):
         super().__init__(node_name="projection_double_sphere")
 
         self.bridge_cv = None
-        self.device = None
         self.handler_parameters = None
         self.name_frame_camera = name_frame_camera
         self.name_frame_lidar = name_frame_lidar
@@ -60,7 +56,6 @@ class NodeProjectionDoubleSphere(Node):
         self._init()
 
     def _init(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.bridge_cv = CvBridge()
         self.profile_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         self.handler_parameters = ParameterHandler(self, verbose=False)
@@ -76,65 +71,68 @@ class NodeProjectionDoubleSphere(Node):
         self.tf_broadcaster = TransformBroadcaster(self)
         self.tf_oracle = TFOracle(self)
 
+    def _init_parameters(self): ...
+
     def _init_publishers(self):
         # namespace_topic = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
-        self.publisher_depth = self.create_publisher(
-            msg_type=Image, topic=self.topic_projected_depth, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup()
-        )
-
-        self.publisher_points = self.create_publisher(
-            msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup()
-        )
+        self.publisher_depth = self.create_publisher(msg_type=Image, topic=self.topic_projected_depth, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
+        self.publisher_points = self.create_publisher(msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
     def _init_subscribers(self):
         self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
+        # TODO
         self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_image, self.subscriber_info, self.subscriber_points], queue_size=10, slop=0.2)
         self.synchronizer.registerCallback(self.on_messages_received_callback)
 
-    def publish_image(self, message_image: Image, image: torch.Tensor):
-        message = self.bridge_cv.cv2_to_imgmsg(image.get_numpy_3D(), header=message_image.header, encoding="mono16")
+    def publish_image(self, message_image, image, stamp):
+        header = copy.copy(message_image.header)
+        header.stamp = stamp
+        message = self.bridge_cv.cv2_to_imgmsg(image, header=header, encoding="mono16")
 
         self.publisher_depth.publish(message)
 
-    def publish_points(self, message_pointcloud: PointCloud2, points: torch.Tensor, offset: int):
+    def publish_points(self, message_pointcloud, pointcloud_colored, offset):
         fields = message_pointcloud.fields + [PointField(name="rgb", offset=offset, datatype=PointField.UINT32, count=1)]
-        message = point_cloud2.create_cloud(message_pointcloud.header, fields, points)
+        message = point_cloud2.create_cloud(message_pointcloud.header, fields, pointcloud_colored)
 
         self.publisher_points.publish(message)
 
-    def points2tensor(self, pointcloud: np.ndarray):
+    def points2tensor(self, pointcloud):
         """Return image as tensor of shape [N, C, HxW]"""
         points = pointcloud[["x", "y", "z"]]
         points = np.lib.recfunctions.structured_to_unstructured(points)
-        points = torch.as_tensor(points, device=self.device)
+        points = torch.as_tensor(points)
         points = points.permute(1, 0)[None, ...]
 
         return points
 
-    def image2tensor(self, image: torch.Tensor):
-        """Return image as tensor of shape [C, H, W]"""
-        image = torch.as_tensor(image, device=self.device)
+    def image2tensor(self, image):
+        """Return image as tensor of shape [N, C, H, W]"""
+        image = torch.as_tensor(image)
         image = image.permute(2, 0, 1)[None, ...]
         return image
 
-    def colors2numpy(self, colors: torch.Tensor):
-        colors = colors.permute(1, 0)
-        colors = colors.numpy(force=True).astype(np.uint32)
-        r = colors[..., 0]
-        g = colors[..., 1]
-        b = colors[..., 2]
+    def colors2numpy(self, colors):
+        colors = colors.numpy(force=True)
+        colors = colors.astype(np.uint32)
+
+        r = colors[0]
+        g = colors[1]
+        b = colors[2]
         colors = (r << 16) | (g << 8) | b
+
         return colors
 
-    def create_dtype_with_rgb(self, dtype: np.dtype):
+    def create_dtype_with_rgb(self, dtype):
         # There is no better way to access this >:(
         # Also np.lib.recfunctions.append_fields does not work with offsets, formats, itemsize
         formats = [field[0] for field in dtype.fields.values()]
         offsets = [field[1] for field in dtype.fields.values()]
         offset = offsets[-1] + np.dtype(formats[-1]).itemsize
+
         dtype = np.dtype(
             {
                 "names": list(dtype.names) + ["rgb"],
@@ -144,36 +142,11 @@ class NodeProjectionDoubleSphere(Node):
                 "itemsize": int(np.ceil((offset + 4) / 8)) * 8,
             }
         )
+
         return dtype, offset
 
-    @torch.inference_mode()
-    def sample_color(self, coords_uv: torch.Tensor, image: torch.Tensor, mask_valid: torch.Tensor, color_invalid: tuple = (255, 87, 51)):
-        coords_uv[..., 0] = 2.0 * coords_uv[..., 0] / image.shape[-1] - 1.0
-        coords_uv[..., 1] = 2.0 * coords_uv[..., 1] / image.shape[-2] - 1.0
-
-        # Interpolation is only implemented for floats
-        image = image.float()
-        colors = torch.nn.functional.grid_sample(image, coords_uv[..., None, :, :], align_corners=True)[..., 0, :]
-        image = image.byte()
-
-        colors[:, 0, :].masked_fill_(~mask_valid, color_invalid[0])
-        colors[:, 1, :].masked_fill_(~mask_valid, color_invalid[1])
-        colors[:, 2, :].masked_fill_(~mask_valid, color_invalid[2])
-
-        return colors
-
-    @torch.inference_mode()
-    def sample_depth(self, coords_xyz: torch.Tensor, points: torch.Tensor, mask_valid: torch.Tensor, depth_invalid: float = 0):
-        depth = ...
-
-        depth.masked_fill_(~mask_valid, depth_invalid)
-
-        return depth
-
-    def compute_color_points(self, pointcloud: np.ndarray, points: torch.Tensor, image: torch.Tensor, model_double_sphere: ModelDoubleSphere):
-        coords_uv, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True)
-
-        colors = self.sample_color(coords_uv, image, mask_valid)
+    def compute_pointcloud_colored(self, model_double_sphere, coords_uv, image, mask_valid, pointcloud):
+        colors = model_double_sphere.sample_color(coords_uv, image, mask_valid)
         colors = colors[0]
 
         colors = self.colors2numpy(colors)
@@ -181,23 +154,22 @@ class NodeProjectionDoubleSphere(Node):
         dtype, offset = self.create_dtype_with_rgb(pointcloud.dtype)
         # Filling a new array for performance (see: https://stackoverflow.com/questions/25427197/numpy-how-to-add-a-column-to-an-existing-structured-array)
         pointcloud_colored = np.empty(pointcloud.shape, dtype=dtype)
-        pointcloud_colored[list(pointcloud.dtype.names)] = pointcloud[list(pointcloud.dtype.names)]
+        names_fields_before = list(pointcloud.dtype.names)
+        pointcloud_colored[names_fields_before] = pointcloud[names_fields_before]
         pointcloud_colored["rgb"] = colors
 
         return pointcloud_colored, offset
 
-    def compute_depth_image(self, pointcloud: np.ndarray, points: torch.Tensor, image: torch.Tensor, model_double_sphere: ModelDoubleSphere):
-        coords_uv = torch.stack(torch.meshgrid(torch.arange(image.shape[0]), torch.arange(image.shape[1])))[None, ...]
-        coords_xyz, mask_valid = model_double_sphere.project_image_onto_points(coords_uv, use_invalid_coords=True)
+    def compute_depth_image(self, model_double_sphere, coords_uv, points, mask_valid):
+        image_depth = model_double_sphere.sample_depth(coords_uv, points, mask_valid, use_knn_interpolate=True, ratio_downsampling=8, k=1)
+        image_depth = image_depth[0, 0]
 
-        image_depth = self.sample_depth(coords_xyz, points, mask_valid)
-        image_depth = image_depth[0]
+        image_depth = image_depth.numpy(force=True)
+        image_depth = image_depth.astype(np.uint16)
 
         return image_depth
 
-    def on_messages_received_callback(self, message_image: Image, message_info: CameraInfo, message_points: PointCloud2):
-        # TODO: use half precision
-
+    def on_messages_received_callback(self, message_image, message_info, message_points):
         success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
         if not success:
             self.get_logger().debug(message)
@@ -211,10 +183,12 @@ class NodeProjectionDoubleSphere(Node):
         image = self.bridge_cv.imgmsg_to_cv2(message_image, desired_encoding="passthrough")
         image = self.image2tensor(image)
 
-        model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info, device=self.device)
+        model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info)
 
-        points_colored, offset = self.compute_color_points(pointcloud, points, image, model_double_sphere)
-        self.publish_points(message_points, points_colored, offset)
+        coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True)
 
-        # image_depth = self.compute_depth_image(model_double_sphere)
-        # self.publish_image(image_depth)
+        pointcloud_colored, offset = self.compute_pointcloud_colored(model_double_sphere, coords_uv_points, image, mask_valid, pointcloud)
+        self.publish_points(message_points, pointcloud_colored, offset)
+
+        image_depth = self.compute_depth_image(model_double_sphere, coords_uv_points, points, mask_valid)
+        self.publish_image(message_image, image_depth, message_points.header.stamp)

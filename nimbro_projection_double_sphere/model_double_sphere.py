@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch_geometric.nn.unpool as geometric_unpool
 
 
 class ModelDoubleSphere:
@@ -8,17 +9,20 @@ class ModelDoubleSphere:
     Proceedings of the International Conference on 3D Vision (3DV) (2018).
     URL: https://arxiv.org/pdf/1807.08957.pdf."""
 
-    def __init__(self, alpha, xi, fx, fy, cx, cy, device=None):
-        self.alpha = 0.62011029
-        self.cx = 1335.9318658
-        self.cy = 984.09536152
-        self.fx = 766.54936879
-        self.fy = 766.48181735
-        self.xi = -0.04469921
-        # -0.04469921 0.62011029  766.54936879  766.48181735 1335.9318658 984.09536152
+    def __init__(self, xi, alpha, fx, fy, cx, cy, shape_image):
+        self.alpha = alpha
+        self.cx = cx
+        self.cy = cy
+        self.device = None
+        self.fx = fx
+        self.fy = fy
+        self.shape_image = shape_image
+        self.xi = xi
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @classmethod
-    def from_camera_info_message(cls, message, device=None):
+    def from_camera_info_message(cls, message):
         try:
             binning_x = message.binning_x if message.binning_x != 0 else 1
             binning_y = message.binning_y if message.binning_y != 0 else 1
@@ -30,6 +34,8 @@ class ModelDoubleSphere:
             offset_x = 0
             offset_y = 0
 
+        shape_image = (message.height, message.width)
+
         xi = message.d[0]
         alpha = message.d[1]
         fx = message.k[0] / binning_x
@@ -37,15 +43,17 @@ class ModelDoubleSphere:
         cx = (message.k[2] - offset_x) / binning_x
         cy = (message.k[5] - offset_y) / binning_y
 
-        instance = cls(xi, alpha, fx, fy, cx, cy, device=device)
+        instance = cls(xi, alpha, fx, fy, cx, cy, shape_image)
         return instance
 
     @torch.inference_mode()
-    def project_points_onto_image(self, coords_xyz, use_invalid_coords=True):
+    def project_points_onto_image(self, coords_xyz, use_invalid_coords=True, use_mask_fov=True):
         """Project 3D points onto 2D image.
         Points frame: [right, down, front].
         Image frame: [right, down]."""
-        x, y, z = coords_xyz[..., 0, :], coords_xyz[..., 1, :], coords_xyz[..., 2, :]
+        coords_xyz = coords_xyz.half().to(self.device)
+
+        x, y, z = coords_xyz[:, 0, :], coords_xyz[:, 1, :], coords_xyz[:, 2, :]
 
         # Eq. (41)
         d1 = torch.sqrt(x**2 + y**2 + z**2)
@@ -56,10 +64,9 @@ class ModelDoubleSphere:
 
         # Eq. (43)
         mask_valid = z > -w2 * d1
-        if not use_invalid_coords:
-            points = points.permute(0, 2, 1)
-            points = points[mask_valid]
-            points = points.permute(0, 2, 1)
+
+        # Only working for batchsize 1
+        if not use_invalid_coords and mask_valid.shape[0] == 1:
             x = x[mask_valid]
             y = y[mask_valid]
             z = z[mask_valid]
@@ -74,7 +81,14 @@ class ModelDoubleSphere:
         denominator = self.alpha * d2 + (1 - self.alpha) * z_shifted
         u = self.fx * x / denominator + self.cx
         v = self.fy * y / denominator + self.cy
-        coords_uv = torch.stack([u, v], dim=-1)
+        coords_uv = torch.stack([u, v], dim=1)
+
+        if use_mask_fov:
+            mask_left = coords_uv[:, 0, :] >= 0
+            mask_top = coords_uv[:, 1, :] >= 0
+            mask_right = coords_uv[:, 0, :] < self.shape_image[1]
+            mask_bottom = coords_uv[:, 1, :] < self.shape_image[0]
+            mask_valid *= mask_left * mask_top * mask_right * mask_bottom
 
         return coords_uv, mask_valid
 
@@ -83,7 +97,9 @@ class ModelDoubleSphere:
         """Project 2D image onto 3D unit sphere.
         Points coordinate system: [right, down, front]
         Image coordinate system: [right, down]"""
-        u, v = coords_uv[..., 0, :], coords_uv[..., 1, :]
+        coords_uv = coords_uv.half().to(self.device)
+
+        u, v = coords_uv[:, 0, :], coords_uv[:, 1, :]
 
         # Eq. (47)
         mx = (u - self.cx) / self.fx
@@ -97,7 +113,9 @@ class ModelDoubleSphere:
 
         # Eq. (51)
         mask_valid = term >= 0 if self.alpha > 0.5 else torch.ones_like(term, dtype=torch.bool)
-        if not use_invalid_coords:
+
+        # Only working for batchsize 1
+        if not use_invalid_coords and mask_valid.shape[0] == 1:
             mx = mx[mask_valid]
             my = my[mask_valid]
             square_r = square_r[mask_valid]
@@ -105,49 +123,86 @@ class ModelDoubleSphere:
             mask_valid = torch.ones_like(term, dtype=torch.bool)
 
         # Eq. (50)
-        mz = (1.0 - self.alpha**2 * square_r**2) / (self.alpha * np.sqrt(term) + 1.0 - self.alpha)
+        mz = (1.0 - self.alpha**2 * square_r) / (self.alpha * torch.sqrt(term) + 1.0 - self.alpha)
 
         # Eq. (46)
-        factor = (mz * self.xi + np.sqrt(mz**2 + (1.0 - self.xi**2) * square_r)) / (mz**2 + square_r)
-        coords_xyz = factor * torch.stack([mx, my, mz], dim=-1)
-        coords_xyz[..., -1] -= self.xi
+        factor = (mz * self.xi + torch.sqrt(mz**2 + (1.0 - self.xi**2) * square_r)) / (mz**2 + square_r)
+        coords_xyz = factor[:, None, :] * torch.stack([mx, my, mz], dim=1)
+        coords_xyz[:, 2, :] -= self.xi
 
         return coords_xyz, mask_valid
 
-    # def _warp_img(self, img, img_pts, valid_mask):
-    #     # Remap
-    #     img_pts = img_pts.astype(np.float32)
-    #     out = cv2.remap(img, img_pts[..., 0], img_pts[..., 1], cv2.INTER_LINEAR)
-    #     out[~valid_mask] = 0.0
-    #     return out
+    @torch.inference_mode()
+    def sample_color(self, coords_uv, image, mask_valid, color_invalid=(255, 87, 51)):
+        coords_uv = coords_uv.half().to(self.device)
+        image = image.half().to(self.device)
+        mask_valid = mask_valid.to(self.device)
 
-    # def to_perspective(self, img, img_size=(512, 512), f=0.25):
-    #     # Generate 3D points
-    #     h, w = img_size
-    #     z = f * min(img_size)
-    #     x = np.arange(w) - w / 2
-    #     y = np.arange(h) - h / 2
-    #     x_grid, y_grid = np.meshgrid(x, y, indexing="xy")
-    #     point3D = np.stack([x_grid, y_grid, np.full_like(x_grid, z)], axis=-1)
+        coords_image = coords_uv.clone()
+        coords_image[:, 0, :] = 2.0 * coords_image[:, 0, :] / self.shape_image[1] - 1.0
+        coords_image[:, 1, :] = 2.0 * coords_image[:, 1, :] / self.shape_image[0] - 1.0
 
-    #     # Project on image plane
-    #     img_pts, valid_mask = self.world2cam(point3D)
-    #     out = self._warp_img(img, img_pts, valid_mask)
-    #     return out
+        coords_image = coords_image.permute(0, 2, 1)
+        # grid_sample not implemented for dtype byte
+        colors = torch.nn.functional.grid_sample(input=image, grid=coords_image[:, None, :, :], align_corners=True)
+        colors = colors[:, :, 0, :]
 
-    # def to_equirect(self, img, img_size=(256, 512)):
-    #     # Generate 3D points
-    #     h, w = img_size
-    #     phi = -np.pi + (np.arange(w) + 0.5) * 2 * np.pi / w
-    #     theta = -np.pi / 2 + (np.arange(h) + 0.5) * np.pi / h
-    #     phi_xy, theta_xy = np.meshgrid(phi, theta, indexing="xy")
+        colors[:, 0, :].masked_fill_(~mask_valid, color_invalid[0])
+        colors[:, 1, :].masked_fill_(~mask_valid, color_invalid[1])
+        colors[:, 2, :].masked_fill_(~mask_valid, color_invalid[2])
 
-    #     x = np.sin(phi_xy) * np.cos(theta_xy)
-    #     y = np.sin(theta_xy)
-    #     z = np.cos(phi_xy) * np.cos(theta_xy)
-    #     point3D = np.stack([x, y, z], axis=-1)
+        return colors
 
-    #     # Project on image plane
-    #     img_pts, valid_mask = self.world2cam(point3D)
-    #     out = self._warp_img(img, img_pts, valid_mask)
-    #     return out
+    # Only working for batchsize 1.
+    @torch.inference_mode()
+    def sample_depth(self, coords_uv, points, mask_valid, use_knn_interpolate=True, ratio_downsampling=8):
+        coords_uv = coords_uv.to(self.device)
+        points = points.to(self.device)
+        mask_valid = mask_valid.to(self.device)
+
+        coords_uv = coords_uv.permute(0, 2, 1)
+        coords_uv = coords_uv[mask_valid]
+        coords_uv = coords_uv.permute(1, 0)
+
+        # Note: values get rounded
+        coords_uv = coords_uv.long()
+        u, v = coords_uv[0], coords_uv[1]
+        coords_uvflat = v * self.shape_image[1] + u
+        coords_uvflat = coords_uvflat.view(-1)
+
+        z = points[:, 2, :]
+        # Exclude invalid z values from mean reduction in case that there are any
+        z = z[mask_valid]
+        # Meters to milimeters
+        z *= 1000.0
+
+        depth = torch.zeros(self.shape_image, dtype=z.dtype, device=self.device)
+        depth = depth.view(-1)
+        depth.scatter_reduce_(dim=0, index=coords_uvflat, src=z, reduce="mean")
+        # Lense has actually 190 degree FOV, so we need to handle negative depth
+        depth[depth < 0] = 0.0
+
+        if use_knn_interpolate:
+            coords_uv_full = torch.stack(
+                torch.meshgrid(
+                    torch.arange(self.shape_image[0] // ratio_downsampling, device=self.device) * ratio_downsampling,
+                    torch.arange(self.shape_image[1] // ratio_downsampling, device=self.device) * ratio_downsampling,
+                ),
+                dim=-1,
+            )
+            coords_uvflat_unique = torch.unique(coords_uvflat, sorted=False)
+            # torch.unique(coords_uv, sorted=False, dim=0) is not working with Pytorch 2.0.0
+            coords_uv_unique = torch.stack((coords_uvflat_unique // self.shape_image[1], coords_uvflat_unique % self.shape_image[1]), dim=-1)
+
+            coords_uv_full_flat = coords_uv_full.view(-1, 2)
+
+            depth_flat = depth[coords_uvflat_unique]
+            depth_flat = depth_flat.view(-1, 1)
+
+            depth = geometric_unpool.knn_interpolate(depth_flat.float(), coords_uv_unique.float(), coords_uv_full_flat.float(), k=1)
+            depth = depth.view(-1, 1, self.shape_image[0] // ratio_downsampling, self.shape_image[1] // ratio_downsampling)
+            depth = torch.nn.functional.upsample(depth, size=self.shape_image, mode="nearest", align_corners=None)
+        else:
+            depth = depth.view(-1, 1, self.shape_image[0], self.shape_image[1])
+
+        return depth
