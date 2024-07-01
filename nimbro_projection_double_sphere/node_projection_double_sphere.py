@@ -8,6 +8,7 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber as Subscribe
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, ReliabilityPolicy, QoSProfile
+from rcl_interfaces.msg import FloatingPointRange, IntegerRange, ParameterDescriptor, ParameterType
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
@@ -36,6 +37,7 @@ class NodeProjectionDoubleSphere(Node):
         topic_points="/ouster/points",
         color_invalid=(255, 87, 51),
         factor_downsampling=8,
+        use_knn_interpolation=True,
         k_knn=1,
         mode_interpolation="bilinear",
     ):
@@ -67,6 +69,7 @@ class NodeProjectionDoubleSphere(Node):
         self.topic_projected_depth = topic_projected_depth
         self.topic_projected_points = topic_projected_points
         self.topic_points = topic_points
+        self.use_knn_interpolation = use_knn_interpolation
 
         self._init()
 
@@ -75,10 +78,10 @@ class NodeProjectionDoubleSphere(Node):
         self.profile_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         self.handler_parameters = ParameterHandler(self, verbose=False)
 
-        self._init_parameters()
-
         self.sampler_color = SamplerColor(color_invalid=self.color_invalid)
         self.sampler_depth = SamplerDepth(factor_downsampling=self.factor_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
+
+        self._init_parameters()
 
         self._init_tf_oracle()
         self._init_publishers()
@@ -89,8 +92,6 @@ class NodeProjectionDoubleSphere(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=False)
         self.tf_broadcaster = TransformBroadcaster(self)
         self.tf_oracle = TFOracle(self)
-
-    def _init_parameters(self): ...
 
     def _init_publishers(self):
         # namespace_topic = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
@@ -185,7 +186,7 @@ class NodeProjectionDoubleSphere(Node):
         return pointcloud_colored, offset
 
     def compute_depth_image(self, coords_uv, points, mask_valid=None):
-        image_depth = self.sampler_depth(coords_uv, points, mask_valid, use_knn_interpolation=True)
+        image_depth = self.sampler_depth(coords_uv, points, mask_valid, use_knn_interpolation=self.use_knn_interpolation)
         image_depth = image_depth[0]
         image_depth = image_depth.permute(1, 2, 0)
 
@@ -218,3 +219,293 @@ class NodeProjectionDoubleSphere(Node):
         self.sampler_depth.shape_image = (-1, message_info.height, message_info.width)
         image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
         self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
+
+    def _init_parameters(self):
+        self.add_on_set_parameters_callback(self.handler_parameters.parameter_callback)
+
+        self._init_parameter_name_frame_camera()
+        self._init_parameter_name_frame_lidar()
+        self._init_parameter_topic_image()
+        self._init_parameter_topic_info()
+        self._init_parameter_topic_points()
+        self._init_parameter_topic_projected_depth()
+        self._init_parameter_topic_projected_points()
+        self._init_parameter_slop_synchronizer()
+        self._init_parameter_color_invalid()
+        self._init_parameter_factor_downsampling()
+        self._init_parameter_k_knn()
+        self._init_parameter_mode_interpolation()
+        self._init_parameter_use_knn_interpolation()
+
+        self.handler_parameters.all_declared()
+
+    def _init_parameter_name_frame_camera(self):
+        descriptor = ParameterDescriptor(
+            name="name_frame_camera",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the camera frame in the tf transform tree",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.name_frame_camera, descriptor)
+
+    def _init_parameter_name_frame_lidar(self):
+        descriptor = ParameterDescriptor(
+            name="name_frame_lidar",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the lidar frame in the tf transform tree",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.name_frame_lidar, descriptor)
+
+    def _init_parameter_topic_image(self):
+        descriptor = ParameterDescriptor(
+            name="topic_image",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the rgb image topic (for subscriber)",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.topic_image, descriptor)
+
+    def _init_parameter_topic_info(self):
+        descriptor = ParameterDescriptor(
+            name="topic_info",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the camera info topic (for subscriber)",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.topic_info, descriptor)
+
+    def _init_parameter_topic_points(self):
+        descriptor = ParameterDescriptor(
+            name="topic_points",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the pointcloud topic (for subscriber)",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.topic_points, descriptor)
+
+    def _init_parameter_topic_projected_depth(self):
+        descriptor = ParameterDescriptor(
+            name="topic_projected_depth",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the projected depth topic (for publisher)",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.topic_projected_depth, descriptor)
+
+    def _init_parameter_topic_projected_points(self):
+        descriptor = ParameterDescriptor(
+            name="topic_projected_points",
+            type=ParameterType.PARAMETER_STRING,
+            description="Name of the colored pointcloud topic (for publisher)",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.topic_projected_points, descriptor)
+
+    def _init_parameter_slop_synchronizer(self):
+        descriptor = ParameterDescriptor(
+            name="slop_synchronizer",
+            type=ParameterType.PARAMETER_DOUBLE,
+            description="Maximum time disparity between associated image and pointcloud messages",
+            read_only=False,
+            floating_point_range=(
+                FloatingPointRange(
+                    from_value=0.0,
+                    to_value=2.0,
+                    step=0.0,
+                ),
+            ),
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.slop_synchronizer, descriptor)
+
+    def _init_parameter_color_invalid(self):
+        descriptor = ParameterDescriptor(
+            name="color_invalid",
+            type=ParameterType.PARAMETER_STRING,
+            description="Rgb color given to invalid points",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.color_invalid, descriptor)
+
+    def _init_parameter_factor_downsampling(self):
+        descriptor = ParameterDescriptor(
+            name="factor_downsampling",
+            type=ParameterType.PARAMETER_INTEGER,
+            description="Downsampling factor used with knn interpolation",
+            read_only=False,
+            int_range=(
+                IntegerRange(
+                    from_value=1,
+                    to_value=16,
+                    step=1,
+                ),
+            ),
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.factor_downsampling, descriptor)
+
+    def _init_parameter_k_knn(self):
+        descriptor = ParameterDescriptor(
+            name="k_knn",
+            type=ParameterType.PARAMETER_INTEGER,
+            description="Number of neighbors used with knn interpolation",
+            read_only=False,
+            int_range=(
+                IntegerRange(
+                    from_value=1,
+                    to_value=10,
+                    step=1,
+                ),
+            ),
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.k_knn, descriptor)
+
+    def _init_parameter_mode_interpolation(self):
+        descriptor = ParameterDescriptor(
+            name="mode_interpolation",
+            type=ParameterType.PARAMETER_STRING,
+            description="Interpolation mode for upsampling used with knn interpolation",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.mode_interpolation, descriptor)
+
+    def _init_parameter_use_knn_interpolation(self):
+        descriptor = ParameterDescriptor(
+            name="use_knn_interpolation",
+            type=ParameterType.PARAMETER_BOOL,
+            description="Usage of knn interpolation",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.use_knn_interpolation, descriptor)
+
+    def parameter_changed(self, parameter):
+        try:
+            func_update = getattr(NodeProjectionDoubleSphere, f"update_{parameter.name}")
+            success, reason = func_update(self, parameter.value)
+        except Exception as e:
+            self.get_logger().info(f"Error: {e}")
+
+        return success, reason
+
+    def update_name_frame_camera(self, name_frame_camera):
+        self.name_frame_camera = name_frame_camera
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_name_frame_lidar(self, name_frame_lidar):
+        self.name_frame_lidar = name_frame_lidar
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_topic_image(self, topic_image):
+        self.topic_image = topic_image
+
+        self._init_subscribers()
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_topic_info(self, topic_info):
+        self.topic_info = topic_info
+
+        self._init_subscribers()
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_topic_points(self, topic_points):
+        self.topic_points = topic_points
+
+        self._init_subscribers()
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_topic_projected_depth(self, topic_projected_depth):
+        self.topic_projected_depth = topic_projected_depth
+
+        self._init_publishers()
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_topic_projected_points(self, topic_projected_points):
+        self.topic_projected_points = topic_projected_points
+
+        self._init_publishers()
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_slop_synchronizer(self, slop_synchronizer):
+        self.slop_synchronizer = slop_synchronizer
+
+        self._init_subscribers()
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_color_invalid(self, color_invalid):
+        self.color_invalid = color_invalid
+
+        self.sampler_color = SamplerColor(color_invalid=self.color_invalid)
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_factor_downsampling(self, factor_downsampling):
+        self.factor_downsampling = factor_downsampling
+
+        self.sampler_depth = SamplerDepth(factor_downsampling=self.factor_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_k_knn(self, k_knn):
+        self.k_knn = k_knn
+
+        self.sampler_depth = SamplerDepth(factor_downsampling=self.factor_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_mode_interpolation(self, mode_interpolation):
+        self.mode_interpolation = mode_interpolation
+
+        self.sampler_depth = SamplerDepth(factor_downsampling=self.factor_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_use_knn_interpolation(self, use_knn_interpolation):
+        self.use_knn_interpolation = use_knn_interpolation
+
+        success = True
+        reason = ""
+        return success, reason
