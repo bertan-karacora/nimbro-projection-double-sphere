@@ -16,7 +16,7 @@ setuptools.setup(
     zip_safe=True,
     maintainer="Bertan Karacora",
     maintainer_email="bertan.karacora@gmail.com",
-    description="ROS2 package for image-to-point-cloud and point-cloud-to-image projection",
+    description="ROS2 package for point-cloud coloring and dense depth interpolation based on the Double Sphere Camera Model",
     license="MIT",
     entry_points={
         "console_scripts": [

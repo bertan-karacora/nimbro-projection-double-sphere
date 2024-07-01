@@ -3,7 +3,7 @@
 <package format="3">
   <name>nimbro_projection_double_sphere</name>
   <version>0.0.1</version>
-  <description>ROS2 package for image-to-point-cloud and point-cloud-to-image projection</description>
+  <description>ROS2 package for point-cloud coloring and dense depth interpolation based on the Double Sphere Camera Model</description>
   <maintainer email="bertan-karacora@gmail.com">Bertan Karacora</maintainer>
   <license>MIT</license>
 
