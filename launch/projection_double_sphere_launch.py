@@ -19,7 +19,7 @@ launch_args = [
         "mode_interpolation",
         description="Interpolation mode for upsampling used with knn interpolation",
         choices=["nearest", "linear", "bilinear", "bicubic", "trilinear", "area", "nearest-exact"],
-        default_value="/ouster/projected/points",
+        default_value="bilinear",
     ),
     DeclareLaunchArgument("use_knn_interpolation", description="Usage of knn interpolation", choices=["True", "False"], default_value="True"),
 ]
