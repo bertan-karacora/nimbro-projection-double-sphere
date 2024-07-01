@@ -3,12 +3,12 @@ import torch_geometric.nn.unpool as geometric_unpool
 
 
 class SamplerDepth:
-    def __init__(self, shape_image=None, ratio_downsampling=8, k_knn=1, mode_interpolation="bilinear"):
+    def __init__(self, shape_image=None, factor_downsampling=8, k_knn=1, mode_interpolation="bilinear"):
         self.coords_uv_full_flat = None
         self.device = None
         self.k_knn = k_knn
         self.mode_interpolation = mode_interpolation
-        self.ratio_downsampling = ratio_downsampling
+        self.factor_downsampling = factor_downsampling
         self._shape_image = None
         self.shape_image = shape_image
 
@@ -28,8 +28,8 @@ class SamplerDepth:
             self.update_coords_uv_full_flat()
 
     def update_coords_uv_full_flat(self):
-        u_full_downsampled = torch.arange(self.shape_image[1] // self.ratio_downsampling, device=self.device) * self.ratio_downsampling
-        v_full_downsampled = torch.arange(self.shape_image[2] // self.ratio_downsampling, device=self.device) * self.ratio_downsampling
+        u_full_downsampled = torch.arange(self.shape_image[1] // self.factor_downsampling, device=self.device) * self.factor_downsampling
+        v_full_downsampled = torch.arange(self.shape_image[2] // self.factor_downsampling, device=self.device) * self.factor_downsampling
         coords_uv_full = torch.stack(torch.meshgrid(u_full_downsampled, v_full_downsampled), dim=-1)
         self.coords_uv_full_flat = coords_uv_full.view(-1, 2)
         self.coords_uv_full_flat = self.coords_uv_full_flat.float()
@@ -65,7 +65,7 @@ class SamplerDepth:
 
         # Need float for input in knn_interpolate. Half apparently leads to artifacts/overflows
         depth_flat = geometric_unpool.knn_interpolate(depth_flat.float(), coords_uv_unique.float(), self.coords_uv_full_flat.float(), k=self.k_knn)
-        depth = depth_flat.view(1, 1, self.shape_image[1] // self.ratio_downsampling, self.shape_image[2] // self.ratio_downsampling)
+        depth = depth_flat.view(1, 1, self.shape_image[1] // self.factor_downsampling, self.shape_image[2] // self.factor_downsampling)
         depth = torch.nn.functional.interpolate(depth, size=self.shape_image[1:], mode=self.mode_interpolation, align_corners=True if self.mode_interpolation not in ["nearest"] else None)
 
         return depth

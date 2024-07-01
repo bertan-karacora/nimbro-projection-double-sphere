@@ -35,7 +35,7 @@ class NodeProjectionDoubleSphere(Node):
         topic_projected_points="/ouster/projected/points",
         topic_points="/ouster/points",
         color_invalid=(255, 87, 51),
-        ratio_downsampling=8,
+        factor_downsampling=8,
         k_knn=1,
         mode_interpolation="bilinear",
     ):
@@ -52,7 +52,7 @@ class NodeProjectionDoubleSphere(Node):
         self.publisher_depth = None
         self.publisher_points_colored = None
         self.profile_qos = None
-        self.ratio_downsampling = ratio_downsampling
+        self.factor_downsampling = factor_downsampling
         self.sampler_color = None
         self.sampler_depth = None
         self.slop_synchronizer = slop_synchronizer
@@ -78,7 +78,7 @@ class NodeProjectionDoubleSphere(Node):
         self._init_parameters()
 
         self.sampler_color = SamplerColor(color_invalid=self.color_invalid)
-        self.sampler_depth = SamplerDepth(ratio_downsampling=self.ratio_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
+        self.sampler_depth = SamplerDepth(factor_downsampling=self.factor_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
 
         self._init_tf_oracle()
         self._init_publishers()
