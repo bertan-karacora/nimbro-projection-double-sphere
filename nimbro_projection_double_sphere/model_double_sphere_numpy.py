@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class ModelDoubleSphereNumpy:
+class ModelDoubleSphere:
     """Implemented according to:
     V. Usenko, N. Demmel, and D. Cremers: The Double Sphere Camera Model.
     Proceedings of the International Conference on 3D Vision (3DV) (2018).
@@ -77,7 +77,7 @@ class ModelDoubleSphereNumpy:
         denominator = self.alpha * d2 + (1 - self.alpha) * z_shifted
         u = self.fx * x / denominator + self.cx
         v = self.fy * y / denominator + self.cy
-        coords_uv = np.stack([u, v], dim=1)
+        coords_uv = np.stack([u, v], axis=1)
 
         if use_mask_fov:
             mask_left = coords_uv[:, 0, :] >= 0
@@ -94,7 +94,7 @@ class ModelDoubleSphereNumpy:
         Coordinate frame of points: [right, down, front]
         Coordinate frame of image: [right, down]"""
         if use_half_precision:
-            coords_xyz = coords_xyz.as_type(np.float16)
+            coords_xyz = coords_xyz.astype(np.float16)
 
         u, v = coords_uv[:, 0, :], coords_uv[:, 1, :]
 
@@ -121,7 +121,7 @@ class ModelDoubleSphereNumpy:
         mz = (1.0 - self.alpha**2 * square_r) / (self.alpha * np.sqrt(term) + 1.0 - self.alpha)
         # Eq. (46)
         factor = (mz * self.xi + np.sqrt(mz**2 + (1.0 - self.xi**2) * square_r)) / (mz**2 + square_r)
-        coords_xyz = factor[:, None, :] * np.stack((mx, my, mz), dim=1)
+        coords_xyz = factor[:, None, :] * np.stack((mx, my, mz), axis=1)
         coords_xyz[:, 2, :] -= self.xi
 
         return coords_xyz, mask_valid
