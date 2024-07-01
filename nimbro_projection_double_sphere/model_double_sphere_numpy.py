@@ -1,8 +1,7 @@
 import numpy as np
-import torch
 
 
-class ModelDoubleSphere:
+class ModelDoubleSphereNumpy:
     """Implemented according to:
     V. Usenko, N. Demmel, and D. Cremers: The Double Sphere Camera Model.
     Proceedings of the International Conference on 3D Vision (3DV) (2018).
@@ -17,8 +16,6 @@ class ModelDoubleSphere:
         self.fy = fy
         self.shape_image = shape_image
         self.xi = xi
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @classmethod
     def from_camera_info_message(cls, message):
@@ -46,21 +43,18 @@ class ModelDoubleSphere:
         instance = cls(xi, alpha, fx, fy, cx, cy, shape_image)
         return instance
 
-    @torch.inference_mode()
     def project_points_onto_image(self, coords_xyz, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True):
         """Project 3D points onto 2D image.
         Shape of coords_xyz: (B, 3, N)
         Coordinate frame of points: [right, down, front]
         Coordinate frame of image: [right, down]"""
         if use_half_precision:
-            coords_xyz = coords_xyz.half()
-
-        coords_xyz = coords_xyz.to(self.device)
+            coords_xyz = coords_xyz.astype(np.float16)
 
         x, y, z = coords_xyz[:, 0, :], coords_xyz[:, 1, :], coords_xyz[:, 2, :]
 
         # Eq. (41)
-        d1 = torch.sqrt(x**2 + y**2 + z**2)
+        d1 = np.sqrt(x**2 + y**2 + z**2)
         # Eq. (45)
         w1 = self.alpha / (1.0 - self.alpha) if self.alpha <= 0.5 else (1.0 - self.alpha) / self.alpha
         # Eq. (44)
@@ -74,16 +68,16 @@ class ModelDoubleSphere:
             y = y[mask_valid][None, ...]
             z = z[mask_valid][None, ...]
             d1 = d1[mask_valid][None, ...]
-            mask_valid = torch.ones_like(z, dtype=torch.bool)
+            mask_valid = np.ones_like(z, dtype=bool)
 
         # Eq. (42)
         z_shifted = self.xi * d1 + z
-        d2 = torch.sqrt(x**2 + y**2 + z_shifted**2)
+        d2 = np.sqrt(x**2 + y**2 + z_shifted**2)
         # Eq. (40)
         denominator = self.alpha * d2 + (1 - self.alpha) * z_shifted
         u = self.fx * x / denominator + self.cx
         v = self.fy * y / denominator + self.cy
-        coords_uv = torch.stack((u, v), dim=1)
+        coords_uv = np.stack([u, v], dim=1)
 
         if use_mask_fov:
             mask_left = coords_uv[:, 0, :] >= 0
@@ -94,16 +88,13 @@ class ModelDoubleSphere:
 
         return coords_uv, mask_valid
 
-    @torch.inference_mode()
     def project_image_onto_points(self, coords_uv, use_invalid_coords=True, use_half_precision=True):
         """Project 2D image onto 3D unit sphere.
         Shape of coords_uv: (B, 2, N)
         Coordinate frame of points: [right, down, front]
         Coordinate frame of image: [right, down]"""
         if use_half_precision:
-            coords_xyz = coords_xyz.half()
-
-        coords_uv = coords_uv.to(self.device)
+            coords_xyz = coords_xyz.as_type(np.float16)
 
         u, v = coords_uv[:, 0, :], coords_uv[:, 1, :]
 
@@ -116,7 +107,7 @@ class ModelDoubleSphere:
         # Eq. (51) can be written to use this
         term = 1.0 - (2.0 * self.alpha - 1.0) * square_r
         # Eq. (51)
-        mask_valid = term >= 0 if self.alpha > 0.5 else torch.ones_like(term, dtype=torch.bool)
+        mask_valid = term >= 0 if self.alpha > 0.5 else np.ones_like(term, dtype=bool)
 
         # Note: Only working for batchsize 1
         if not use_invalid_coords and mask_valid.shape[0] == 1:
@@ -124,13 +115,13 @@ class ModelDoubleSphere:
             my = my[mask_valid][None, ...]
             square_r = square_r[mask_valid][None, ...]
             term = term[mask_valid][None, ...]
-            mask_valid = torch.ones_like(term, dtype=torch.bool)
+            mask_valid = np.ones_like(term, dtype=bool)
 
         # Eq. (50)
-        mz = (1.0 - self.alpha**2 * square_r) / (self.alpha * torch.sqrt(term) + 1.0 - self.alpha)
+        mz = (1.0 - self.alpha**2 * square_r) / (self.alpha * np.sqrt(term) + 1.0 - self.alpha)
         # Eq. (46)
-        factor = (mz * self.xi + torch.sqrt(mz**2 + (1.0 - self.xi**2) * square_r)) / (mz**2 + square_r)
-        coords_xyz = factor[:, None, :] * torch.stack((mx, my, mz), dim=1)
+        factor = (mz * self.xi + np.sqrt(mz**2 + (1.0 - self.xi**2) * square_r)) / (mz**2 + square_r)
+        coords_xyz = factor[:, None, :] * np.stack((mx, my, mz), dim=1)
         coords_xyz[:, 2, :] -= self.xi
 
         return coords_xyz, mask_valid
