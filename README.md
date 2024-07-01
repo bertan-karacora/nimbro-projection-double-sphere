@@ -2,7 +2,7 @@
 
 ## Notes
 
-- GPU RAM usage: ~422MiB
+- GPU RAM usage: ~626MiB
 
 ## TODO
 

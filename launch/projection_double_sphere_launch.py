@@ -26,8 +26,8 @@ launch_args = [
 
 node = Node(
     package="nimbro_projection_double_sphere",
-    namespace="scripts",
-    executable="spin_projection",
+    namespace="",
+    executable="spin",
     name="nimbro_projection_double_sphere",
     output="screen",
     parameters=[

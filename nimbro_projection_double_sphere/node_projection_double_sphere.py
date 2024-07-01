@@ -19,8 +19,8 @@ from nimbro_utils.parameter_handler import ParameterHandler
 from nimbro_utils.tf_oracle import TFOracle
 
 from nimbro_projection_double_sphere.model_double_sphere import ModelDoubleSphere
-import nimbro_projection_double_sphere.sampler_color as SamplerColor
-import nimbro_projection_double_sphere.sampler_depth as SamplerDepth
+from nimbro_projection_double_sphere.sampler_color import SamplerColor
+from nimbro_projection_double_sphere.sampler_depth import SamplerDepth
 
 
 class NodeProjectionDoubleSphere(Node):
@@ -342,7 +342,7 @@ class NodeProjectionDoubleSphere(Node):
             type=ParameterType.PARAMETER_INTEGER,
             description="Downsampling factor used with knn interpolation",
             read_only=False,
-            int_range=(
+            integer_range=(
                 IntegerRange(
                     from_value=1,
                     to_value=16,
@@ -359,7 +359,7 @@ class NodeProjectionDoubleSphere(Node):
             type=ParameterType.PARAMETER_INTEGER,
             description="Number of neighbors used with knn interpolation",
             read_only=False,
-            int_range=(
+            integer_range=(
                 IntegerRange(
                     from_value=1,
                     to_value=10,
@@ -468,7 +468,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_color_invalid(self, color_invalid):
-        self.color_invalid = color_invalid
+        # TODO: This is a little dangerous
+        self.color_invalid = eval(color_invalid)
 
         self.sampler_color = SamplerColor(color_invalid=self.color_invalid)
 

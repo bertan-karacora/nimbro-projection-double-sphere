@@ -17,7 +17,7 @@ class SamplerColor:
 
         return coords_uv
 
-    def sample_colors(self, images):
+    def sample_colors(self, coords_uv, images):
         coords_uv = self.coords_to_continuous(coords_uv, shape_image=images.shape[1:], inplace=True)
         coords_uv = coords_uv.permute(0, 2, 1)
 
@@ -45,7 +45,7 @@ class SamplerColor:
         if mask_valid is not None:
             mask_valid = mask_valid.to(self.device)
 
-        colors = self.sample_colors(images)
+        colors = self.sample_colors(coords_uv, images)
 
         if mask_valid is not None:
             colors[:, 0, :].masked_fill_(~mask_valid, self.color_invalid[0])
