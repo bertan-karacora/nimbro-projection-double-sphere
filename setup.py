@@ -6,7 +6,7 @@ NAME_PACKAGE = "nimbro_projection_double_sphere"
 setuptools.setup(
     name=NAME_PACKAGE,
     version="0.0.1",
-    packages=setuptools.find_namespace_packages(exclude=["resource", "launch"]),
+    packages=setuptools.find_packages(exclude=["resource", "launch"]),
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{NAME_PACKAGE}"]),
         (f"share/{NAME_PACKAGE}", ["package.xml"]),
