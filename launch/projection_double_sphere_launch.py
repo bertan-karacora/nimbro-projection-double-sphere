@@ -13,13 +13,13 @@ launch_args = [
     DeclareLaunchArgument("topic_projected_points", description="Name of the colored pointcloud topic (for publisher)", default_value="/ouster/projected/points"),
     DeclareLaunchArgument("slop_synchronizer", description="Maximum time disparity between associated image and pointcloud messages", default_value="0.2"),
     DeclareLaunchArgument("color_invalid", description="Rgb color given to invalid points", default_value="(255, 87, 51)"),
-    DeclareLaunchArgument("factor_downsampling", description="Downsampling factor used with knn interpolation", default_value="8"),
+    DeclareLaunchArgument("factor_downsampling", description="Downsampling factor used with knn interpolation", default_value="4"),
     DeclareLaunchArgument("k_knn", description="Number of neighbors used with knn interpolation", default_value="1"),
     DeclareLaunchArgument(
         "mode_interpolation",
         description="Interpolation mode for upsampling used with knn interpolation",
         choices=["nearest", "linear", "bilinear", "bicubic", "trilinear", "area", "nearest-exact"],
-        default_value="bilinear",
+        default_value="nearest",
     ),
     DeclareLaunchArgument("use_knn_interpolation", description="Usage of knn interpolation", choices=["True", "False"], default_value="True"),
 ]

@@ -3,7 +3,7 @@ import torch_geometric.nn.unpool as geometric_unpool
 
 
 class SamplerDepth:
-    def __init__(self, shape_image=None, factor_downsampling=8, k_knn=1, mode_interpolation="bilinear"):
+    def __init__(self, shape_image=None, factor_downsampling=8, k_knn=1, mode_interpolation="nearest"):
         self.coords_uv_full_flat = None
         self.device = None
         self.k_knn = k_knn
@@ -49,7 +49,7 @@ class SamplerDepth:
 
         depth = torch.zeros(self.shape_image[1:], dtype=z.dtype, device=self.device)
         depth_flat = depth.view(-1)
-        depth_flat.scatter_reduce_(dim=0, index=coords_uvflat, src=z, include_self=False, reduce="mean")
+        depth_flat.scatter_reduce_(dim=0, index=coords_uvflat, src=z, include_self=False, reduce="min")
 
         return depth_flat
 

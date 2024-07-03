@@ -36,10 +36,10 @@ class NodeProjectionDoubleSphere(Node):
         topic_projected_points="/ouster/projected/points",
         topic_points="/ouster/points",
         color_invalid=(255, 87, 51),
-        factor_downsampling=8,
+        factor_downsampling=4,
         use_knn_interpolation=True,
         k_knn=1,
-        mode_interpolation="bilinear",
+        mode_interpolation="nearest",
     ):
         super().__init__(node_name="projection_double_sphere")
 

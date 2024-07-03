@@ -94,7 +94,7 @@ class ModelDoubleSphere:
         Coordinate frame of points: [right, down, front]
         Coordinate frame of image: [right, down]"""
         if use_half_precision:
-            coords_xyz = coords_xyz.astype(np.float16)
+            coords_uv = coords_uv.astype(np.float16)
 
         u, v = coords_uv[:, 0, :], coords_uv[:, 1, :]
 

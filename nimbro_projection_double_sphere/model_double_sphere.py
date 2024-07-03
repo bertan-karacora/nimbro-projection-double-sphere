@@ -101,7 +101,7 @@ class ModelDoubleSphere:
         Coordinate frame of points: [right, down, front]
         Coordinate frame of image: [right, down]"""
         if use_half_precision:
-            coords_xyz = coords_xyz.half()
+            coords_uv = coords_uv.half()
 
         coords_uv = coords_uv.to(self.device)
 
