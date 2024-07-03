@@ -101,4 +101,7 @@ class SamplerDepth:
         # Lense has actually 190 degree FOV, so we need to handle negative depth
         depth[depth < 0] = 0.0
 
+        # Meters to milimeters
+        depth *= 1000.0
+
         return depth

@@ -35,7 +35,7 @@ class NodeProjectionDoubleSphere(Node):
         topic_projected_depth="/camera_ids/projected/depth/image",
         topic_projected_points="/ouster/projected/points",
         topic_points="/ouster/points",
-        color_invalid=(255, 87, 51),
+        color_invalid="(255, 87, 51)",
         factor_downsampling=4,
         use_knn_interpolation=True,
         k_knn=1,
