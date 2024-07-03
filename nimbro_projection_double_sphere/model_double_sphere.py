@@ -116,7 +116,7 @@ class ModelDoubleSphere:
         # Eq. (51) can be written to use this
         term = 1.0 - (2.0 * self.alpha - 1.0) * square_r
         # Eq. (51)
-        mask_valid = term >= 0 if self.alpha > 0.5 else torch.ones_like(term, dtype=torch.bool)
+        mask_valid = term >= 0.0 if self.alpha > 0.5 else torch.ones_like(term, dtype=torch.bool)
 
         # Note: Only working for batchsize 1
         if not use_invalid_coords and mask_valid.shape[0] == 1:

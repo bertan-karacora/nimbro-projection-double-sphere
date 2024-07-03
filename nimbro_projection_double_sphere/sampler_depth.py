@@ -99,7 +99,8 @@ class SamplerDepth:
             depth = depth_flat.view(1, 1, *self.shape_image[1:])
 
         # Lense has actually 190 degree FOV, so we need to handle negative depth
-        depth[depth < 0] = 0.0
+        mask_valid_fov = depth > 0.0
+        depth[~mask_valid_fov] = 0.0
 
         # Meters to milimeters
         depth *= 1000.0

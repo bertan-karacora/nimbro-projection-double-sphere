@@ -88,7 +88,7 @@ class ModelDoubleSphere:
 
         return coords_uv, mask_valid
 
-    def project_image_onto_points(self, coords_uv, use_invalid_coords=True, use_half_precision=True):
+    def project_image_onto_points(self, coords_uv, use_invalid_coords=True, use_half_precision=True, use_mask_fov=True):
         """Project 2D image onto 3D unit sphere.
         Shape of coords_uv: (B, 2, N)
         Coordinate frame of points: [right, down, front]
@@ -107,7 +107,7 @@ class ModelDoubleSphere:
         # Eq. (51) can be written to use this
         term = 1.0 - (2.0 * self.alpha - 1.0) * square_r
         # Eq. (51)
-        mask_valid = term >= 0 if self.alpha > 0.5 else np.ones_like(term, dtype=bool)
+        mask_valid = term >= 0.0 if self.alpha > 0.5 else np.ones_like(term, dtype=bool)
 
         # Note: Only working for batchsize 1
         if not use_invalid_coords and mask_valid.shape[0] == 1:
@@ -123,5 +123,9 @@ class ModelDoubleSphere:
         factor = (mz * self.xi + np.sqrt(mz**2 + (1.0 - self.xi**2) * square_r)) / (mz**2 + square_r)
         coords_xyz = factor[:, None, :] * np.stack((mx, my, mz), axis=1)
         coords_xyz[:, 2, :] -= self.xi
+
+        if use_mask_fov:
+            mask_behind = coords_xyz[:, 2, :] > 0.0
+            mask_valid *= mask_behind
 
         return coords_xyz, mask_valid
