@@ -36,7 +36,7 @@ class NodeProjectionDoubleSphere(Node):
         topic_projected_points="/ouster/projected/points",
         topic_points="/ouster/points",
         color_invalid="(255, 87, 51)",
-        factor_downsampling=4,
+        factor_downsampling=8,
         use_knn_interpolation=True,
         k_knn=1,
         mode_interpolation="nearest",
