@@ -1,11 +1,14 @@
 import copy
+import threading
 
 import numpy as np
 import torch
 
 from cv_bridge import CvBridge
-from message_filters import ApproximateTimeSynchronizer, Subscriber as SubscriberFilter
-from rclpy.callback_groups import ReentrantCallbackGroup
+from message_filters import ApproximateTimeSynchronizer, Cache, Subscriber as SubscriberFilter
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.duration import Duration
+from rclpy.time import Time
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, ReliabilityPolicy, QoSProfile
 from rcl_interfaces.msg import FloatingPointRange, IntegerRange, ParameterDescriptor, ParameterType
@@ -28,8 +31,7 @@ class NodeProjectionDoubleSphere(Node):
         self,
         name_frame_camera="camera_ids_link",
         name_frame_lidar="os_sensor_link",
-        # TODO: slop
-        slop_synchronizer=0.2,
+        slop_synchronizer=0.05,
         topic_image="/camera_ids/image_color",
         topic_info="/camera_ids/camera_info",
         topic_projected_depth="/camera_ids/projected/depth/image",
@@ -48,6 +50,7 @@ class NodeProjectionDoubleSphere(Node):
         self.coords_uv_full_flat = None
         self.handler_parameters = None
         self.k_knn = k_knn
+        self.lock = None
         self.mode_interpolation = mode_interpolation
         self.name_frame_camera = name_frame_camera
         self.name_frame_lidar = name_frame_lidar
@@ -74,6 +77,7 @@ class NodeProjectionDoubleSphere(Node):
         self._init()
 
     def _init(self):
+        self.lock = threading.Lock()
         self.bridge_cv = CvBridge()
         self.profile_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         self.handler_parameters = ParameterHandler(self, verbose=False)
@@ -103,9 +107,17 @@ class NodeProjectionDoubleSphere(Node):
         self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
-        # TODO: queue size
-        self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_image, self.subscriber_info, self.subscriber_points], queue_size=10, slop=self.slop_synchronizer)
-        self.synchronizer.registerCallback(self.on_messages_received_callback)
+        # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
+        # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
+        # self.synchronizer.registerCallback(self.on_messages_received_callback)
+
+        self.cache_image = Cache(self.subscriber_image, 15)
+        self.cache_image.registerCallback(self.on_message_image_received_callback)
+
+        self.cache_info = Cache(self.subscriber_info, 15)
+
+        self.cache_points = Cache(self.subscriber_points, 15)
+        self.cache_points.registerCallback(self.on_message_points_received_callback)
 
     def publish_image(self, message_image, image, stamp=None):
         if stamp is not None:
@@ -195,7 +207,43 @@ class NodeProjectionDoubleSphere(Node):
 
         return image_depth
 
-    def on_messages_received_callback(self, message_image, message_info, message_points):
+    def on_message_image_received_callback(self, message_image):
+        time_message = Time.from_msg(message_image.header.stamp)
+        self.on_messages_received_callback(time_message, message_image=message_image)
+
+    def on_message_points_received_callback(self, message_points):
+        time_message = Time.from_msg(message_points.header.stamp)
+        self.on_messages_received_callback(time_message, message_points=message_points)
+
+    def on_messages_received_callback(self, time_message, message_points=None, message_image=None, message_info=None):
+        message_points = self.cache_points.getElemBeforeTime(time_message) if message_points is None else message_points
+        message_image = self.cache_image.getElemBeforeTime(time_message) if message_image is None else message_image
+        message_info = self.cache_info.getElemBeforeTime(time_message) if message_info is None else message_info
+
+        if message_info is None or message_image is None or message_points is None:
+            self.get_logger().debug(f"Cache empty")
+            return
+
+        time_image = Time.from_msg(message_image.header.stamp)
+        time_info = Time.from_msg(message_info.header.stamp)
+        time_points = Time.from_msg(message_points.header.stamp)
+
+        if time_image != time_info:
+            self.get_logger().debug("Image and info topic stamps unequal")
+            return
+
+        duration_difference = time_points - time_image if time_points > time_image else time_image - time_points
+        if duration_difference > Duration(seconds=self.slop_synchronizer):
+            self.get_logger().debug(f"Image/Info and point-cloud topic stamps difference too big: {duration_difference}")
+            return
+
+        self.lock.acquire()
+        if any(time_points == time_cached for time_cached in self.cache_points.cache_times):
+            self.get_logger().debug(f"Messages skipped because they pointcloud has been used already")
+            self.lock.release()
+            return
+        self.lock.release()
+
         success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
         if not success:
             self.get_logger().debug(message)
