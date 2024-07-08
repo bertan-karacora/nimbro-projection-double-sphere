@@ -46,6 +46,7 @@ class NodeProjectionDoubleSphere(Node):
         super().__init__(node_name="projection_double_sphere")
 
         self.bridge_cv = None
+        self.cache_times_points_message = []
         self.color_invalid = color_invalid
         self.coords_uv_full_flat = None
         self.handler_parameters = None
@@ -112,11 +113,10 @@ class NodeProjectionDoubleSphere(Node):
         # self.synchronizer.registerCallback(self.on_messages_received_callback)
 
         self.cache_image = Cache(self.subscriber_image, 15)
-        self.cache_image.registerCallback(self.on_message_image_received_callback)
-
         self.cache_info = Cache(self.subscriber_info, 15)
-
         self.cache_points = Cache(self.subscriber_points, 15)
+
+        self.cache_image.registerCallback(self.on_message_image_received_callback)
         self.cache_points.registerCallback(self.on_message_points_received_callback)
 
     def publish_image(self, message_image, image, stamp=None):
@@ -238,10 +238,15 @@ class NodeProjectionDoubleSphere(Node):
             return
 
         self.lock.acquire()
-        if any(time_points == time_cached for time_cached in self.cache_points.cache_times):
-            self.get_logger().debug(f"Messages skipped because they pointcloud has been used already")
+
+        if any(time_points == time_cached for time_cached in self.cache_times_points_message):
+            self.get_logger().debug(f"Messages skipped because the pointcloud has been used already")
             self.lock.release()
             return
+
+        self.cache_times_points_message += [time_points]
+        self.cache_times_points_message = self.cache_times_points_message[-15:]
+
         self.lock.release()
 
         success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
