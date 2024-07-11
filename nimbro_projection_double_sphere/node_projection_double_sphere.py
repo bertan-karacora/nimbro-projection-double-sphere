@@ -143,7 +143,7 @@ class NodeProjectionDoubleSphere(Node):
         points = pointcloud[["x", "y", "z"]]
         points = np.lib.recfunctions.structured_to_unstructured(points)
         points = torch.as_tensor(points, dtype=torch.float16)
-        # points = torch.as_tensor(points, dtype=torch.float16, device=self.device) # More GPU RAM, less CPU cost
+        # points = torch.as_tensor(points, dtype=torch.float16, device=self.device)  # More GPU RAM, less CPU cost
         points = points.permute(1, 0)
         points = points[None, ...]
 
@@ -152,7 +152,7 @@ class NodeProjectionDoubleSphere(Node):
     def image2tensor(self, image):
         """Return image as tensor of shape [B, C, H, W]"""
         image = torch.as_tensor(image)
-        # image = torch.as_tensor(image, device=self.device) # More GPU RAM, less CPU cost
+        # image = torch.as_tensor(image, device=self.device)  # More GPU RAM, less CPU cost
         image = image.permute(2, 0, 1)
         images = image[None, ...]
         return images
@@ -208,6 +208,19 @@ class NodeProjectionDoubleSphere(Node):
         image_depth = image_depth.detach().cpu().numpy().astype(np.uint16)
 
         return image_depth
+
+    # Apparently, messages are received in correct order already (based on a few inspected samples), so this is not necessary
+    # def get_newest_element_before_time(self, cache, time_before):
+    #     """Custom function to replace cache.getElemBeforeTime which does not order"""
+    #     message_newest_before = None
+    #     time_newest_before = None
+    #     self.get_logger().info(f"{cache.cache_times}")
+    #     for message, time in zip(cache.cache_msgs, cache.cache_times):
+    #         if time <= time_before and (time_newest_before is None or time_newest_before < time):
+    #             message_newest_before = message
+    #             time_newest_before = time
+
+    #     return message_newest_before
 
     def on_message_image_received_callback(self, message_image):
         time_message = Time.from_msg(message_image.header.stamp)
@@ -269,6 +282,8 @@ class NodeProjectionDoubleSphere(Node):
         model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info)
         coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True)
 
+        # self.get_logger().info(f"Offset before publish: {(self.get_clock().now() - time_image).nanoseconds / 1_000_000_000}")
+
         pointcloud_colored, offset = self.compute_pointcloud_colored(coords_uv_points, images, pointcloud, mask_valid)
         self.publish_points(message_points, pointcloud_colored, offset)
 
@@ -277,7 +292,7 @@ class NodeProjectionDoubleSphere(Node):
         image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
         self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
 
-        # self.get_logger().info(f"Offset2: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
+        # self.get_logger().info(f"Offset after publish: {(self.get_clock().now() - time_image).nanoseconds / 1_000_000_000}")
 
     def _init_parameters(self):
         self.add_on_set_parameters_callback(self.handler_parameters.parameter_callback)
