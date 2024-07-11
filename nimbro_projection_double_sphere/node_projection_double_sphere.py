@@ -114,9 +114,9 @@ class NodeProjectionDoubleSphere(Node):
         # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
         # self.synchronizer.registerCallback(self.on_messages_received_callback)
 
-        self.cache_image = Cache(self.subscriber_image, 10)
-        self.cache_info = Cache(self.subscriber_info, 10)
-        self.cache_points = Cache(self.subscriber_points, 10)
+        self.cache_image = Cache(self.subscriber_image, 15)
+        self.cache_info = Cache(self.subscriber_info, 15)
+        self.cache_points = Cache(self.subscriber_points, 15)
 
         self.cache_image.registerCallback(self.on_message_image_received_callback)
         self.cache_points.registerCallback(self.on_message_points_received_callback)
@@ -210,17 +210,16 @@ class NodeProjectionDoubleSphere(Node):
         return image_depth
 
     # Apparently, messages are received in correct order already (based on a few inspected samples), so this is not necessary
-    # def get_newest_element_before_time(self, cache, time_before):
-    #     """Custom function to replace cache.getElemBeforeTime which does not order"""
-    #     message_newest_before = None
-    #     time_newest_before = None
-    #     self.get_logger().info(f"{cache.cache_times}")
-    #     for message, time in zip(cache.cache_msgs, cache.cache_times):
-    #         if time <= time_before and (time_newest_before is None or time_newest_before < time):
-    #             message_newest_before = message
-    #             time_newest_before = time
+    def get_newest_element_before_time(self, cache, time_before):
+        """Custom function to replace cache.getElemBeforeTime which does not order"""
+        message_newest_before = None
+        time_newest_before = None
+        for message, time in zip(cache.cache_msgs, cache.cache_times):
+            if time <= time_before and (time_newest_before is None or time_newest_before < time):
+                message_newest_before = message
+                time_newest_before = time
 
-    #     return message_newest_before
+        return message_newest_before
 
     def on_message_image_received_callback(self, message_image):
         time_message = Time.from_msg(message_image.header.stamp)
@@ -235,6 +234,13 @@ class NodeProjectionDoubleSphere(Node):
         message_image = self.cache_image.getElemBeforeTime(time_message) if message_image is None else message_image
         message_info = self.cache_info.getElemBeforeTime(time_message) if message_info is None else message_info
 
+        # message_points = self.get_newest_element_before_time(self.cache_points, time_message) if message_points is None else message_points
+        # message_image = self.get_newest_element_before_time(self.cache_image, time_message) if message_image is None else message_image
+        # message_info = self.get_newest_element_before_time(self.cache_info, time_message) if message_info is None else message_info
+
+        # self.get_logger().debug(f"Points: {[time.nanoseconds / 1_000_000_000 for time in self.cache_points.cache_times]}")
+        # self.get_logger().debug(f"Image: {[time.nanoseconds / 1_000_000_000 for time in self.cache_image.cache_times]}")
+
         if message_info is None or message_image is None or message_points is None:
             self.get_logger().debug(f"Cache empty")
             return
@@ -243,9 +249,9 @@ class NodeProjectionDoubleSphere(Node):
         time_info = Time.from_msg(message_info.header.stamp)
         time_points = Time.from_msg(message_points.header.stamp)
 
-        if time_image != time_info:
-            self.get_logger().debug("Image and info topic stamps unequal")
-            return
+        # if time_image != time_info:
+        #     self.get_logger().info("Image and info topic stamps unequal")
+        #     return
 
         duration_difference = time_points - time_image if time_points > time_image else time_image - time_points
         if duration_difference > Duration(seconds=self.slop_synchronizer):
@@ -262,7 +268,7 @@ class NodeProjectionDoubleSphere(Node):
         # self.get_logger().info(f"Offset1: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
         self.cache_times_points_message += [time_points]
-        self.cache_times_points_message = self.cache_times_points_message[-20:]
+        self.cache_times_points_message = self.cache_times_points_message[-15:]
 
         self.lock.release()
 
@@ -282,7 +288,7 @@ class NodeProjectionDoubleSphere(Node):
         model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info)
         coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True)
 
-        # self.get_logger().info(f"Offset before publish: {(self.get_clock().now() - time_image).nanoseconds / 1_000_000_000}")
+        # self.get_logger().info(f"Offset before publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
         pointcloud_colored, offset = self.compute_pointcloud_colored(coords_uv_points, images, pointcloud, mask_valid)
         self.publish_points(message_points, pointcloud_colored, offset)
@@ -292,7 +298,7 @@ class NodeProjectionDoubleSphere(Node):
         image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
         self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
 
-        # self.get_logger().info(f"Offset after publish: {(self.get_clock().now() - time_image).nanoseconds / 1_000_000_000}")
+        # self.get_logger().info(f"Offset after publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
     def _init_parameters(self):
         self.add_on_set_parameters_callback(self.handler_parameters.parameter_callback)
