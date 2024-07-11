@@ -49,6 +49,7 @@ class NodeProjectionDoubleSphere(Node):
         self.cache_times_points_message = []
         self.color_invalid = color_invalid
         self.coords_uv_full_flat = None
+        self.device = None
         self.handler_parameters = None
         self.k_knn = k_knn
         self.lock = None
@@ -78,6 +79,7 @@ class NodeProjectionDoubleSphere(Node):
         self._init()
 
     def _init(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lock = threading.Lock()
         self.bridge_cv = CvBridge()
         self.profile_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
@@ -112,9 +114,9 @@ class NodeProjectionDoubleSphere(Node):
         # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
         # self.synchronizer.registerCallback(self.on_messages_received_callback)
 
-        self.cache_image = Cache(self.subscriber_image, 15)
-        self.cache_info = Cache(self.subscriber_info, 15)
-        self.cache_points = Cache(self.subscriber_points, 15)
+        self.cache_image = Cache(self.subscriber_image, 10)
+        self.cache_info = Cache(self.subscriber_info, 10)
+        self.cache_points = Cache(self.subscriber_points, 10)
 
         self.cache_image.registerCallback(self.on_message_image_received_callback)
         self.cache_points.registerCallback(self.on_message_points_received_callback)
@@ -140,7 +142,8 @@ class NodeProjectionDoubleSphere(Node):
         """Return image as tensor of shape [B, C, HxW]"""
         points = pointcloud[["x", "y", "z"]]
         points = np.lib.recfunctions.structured_to_unstructured(points)
-        points = torch.as_tensor(points)
+        points = torch.as_tensor(points, dtype=torch.float16)
+        # points = torch.as_tensor(points, dtype=torch.float16, device=self.device) # More GPU RAM, less CPU cost
         points = points.permute(1, 0)
         points = points[None, ...]
 
@@ -149,13 +152,13 @@ class NodeProjectionDoubleSphere(Node):
     def image2tensor(self, image):
         """Return image as tensor of shape [B, C, H, W]"""
         image = torch.as_tensor(image)
+        # image = torch.as_tensor(image, device=self.device) # More GPU RAM, less CPU cost
         image = image.permute(2, 0, 1)
         images = image[None, ...]
         return images
 
     def colors_to_numpy(self, colors):
-        colors = colors.numpy(force=True)
-        colors = colors.astype(np.uint32)
+        colors = colors.detach().cpu().numpy().astype(np.uint32)
 
         r = colors[0]
         g = colors[1]
@@ -202,8 +205,7 @@ class NodeProjectionDoubleSphere(Node):
         image_depth = image_depth[0]
         image_depth = image_depth.permute(1, 2, 0)
 
-        image_depth = image_depth.numpy(force=True)
-        image_depth = image_depth.astype(np.uint16)
+        image_depth = image_depth.detach().cpu().numpy().astype(np.uint16)
 
         return image_depth
 
@@ -244,8 +246,10 @@ class NodeProjectionDoubleSphere(Node):
             self.lock.release()
             return
 
+        # self.get_logger().info(f"Offset1: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
+
         self.cache_times_points_message += [time_points]
-        self.cache_times_points_message = self.cache_times_points_message[-15:]
+        self.cache_times_points_message = self.cache_times_points_message[-20:]
 
         self.lock.release()
 
@@ -272,6 +276,8 @@ class NodeProjectionDoubleSphere(Node):
         self.sampler_depth.shape_image = (-1, message_info.height, message_info.width)
         image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
         self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
+
+        # self.get_logger().info(f"Offset2: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
     def _init_parameters(self):
         self.add_on_set_parameters_callback(self.handler_parameters.parameter_callback)
