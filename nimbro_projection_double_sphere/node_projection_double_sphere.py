@@ -39,6 +39,8 @@ class NodeProjectionDoubleSphere(Node):
         topic_points="/ouster/points",
         color_invalid="(255, 87, 51)",
         factor_downsampling=8,
+        use_color_sampling=True,
+        use_depth_sampling=True,
         use_knn_interpolation=True,
         k_knn=1,
         mode_interpolation="nearest",
@@ -74,6 +76,8 @@ class NodeProjectionDoubleSphere(Node):
         self.topic_projected_depth = topic_projected_depth
         self.topic_projected_points = topic_projected_points
         self.topic_points = topic_points
+        self.use_color_sampling = use_color_sampling
+        self.use_depth_sampling = use_depth_sampling
         self.use_knn_interpolation = use_knn_interpolation
 
         self._init()
@@ -281,19 +285,22 @@ class NodeProjectionDoubleSphere(Node):
         pointcloud = point_cloud2.read_points(message_points, skip_nans=True)
         points = self.points2tensor(pointcloud)
 
-        image = self.bridge_cv.imgmsg_to_cv2(message_image, desired_encoding="passthrough")
-        images = self.image2tensor(image)
+        if self.use_color_sampling:
+            image = self.bridge_cv.imgmsg_to_cv2(message_image, desired_encoding="passthrough")
+            images = self.image2tensor(image)
 
         model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info)
         coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True)
 
-        pointcloud_colored, offset = self.compute_pointcloud_colored(coords_uv_points, images, pointcloud, mask_valid)
-        self.publish_points(message_points, pointcloud_colored, offset)
+        if self.use_color_sampling:
+            pointcloud_colored, offset = self.compute_pointcloud_colored(coords_uv_points, images, pointcloud, mask_valid)
+            self.publish_points(message_points, pointcloud_colored, offset)
 
-        # Number of channels unknown
-        self.sampler_depth.shape_image = (-1, message_info.height, message_info.width)
-        image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
-        self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
+        if self.use_depth_sampling:
+            # Number of channels unknown
+            self.sampler_depth.shape_image = (-1, message_info.height, message_info.width)
+            image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
+            self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
 
         # self.get_logger().info(f"Time offset from pointcloud message after publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
@@ -457,6 +464,26 @@ class NodeProjectionDoubleSphere(Node):
         self.parameter_descriptors += [descriptor]
         self.declare_parameter(descriptor.name, self.mode_interpolation, descriptor)
 
+    def _init_parameter_use_color_sampling(self):
+        descriptor = ParameterDescriptor(
+            name="use_color_sampling",
+            type=ParameterType.PARAMETER_BOOL,
+            description="Usage of color sampling",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.use_color_sampling, descriptor)
+
+    def _init_parameter_use_depth_sampling(self):
+        descriptor = ParameterDescriptor(
+            name="use_depth_sampling",
+            type=ParameterType.PARAMETER_BOOL,
+            description="Usage of depth sampling",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.use_depth_sampling, descriptor)
+
     def _init_parameter_use_knn_interpolation(self):
         descriptor = ParameterDescriptor(
             name="use_knn_interpolation",
@@ -576,6 +603,20 @@ class NodeProjectionDoubleSphere(Node):
         self.mode_interpolation = mode_interpolation
 
         self.sampler_depth = SamplerDepth(factor_downsampling=self.factor_downsampling, k_knn=self.k_knn, mode_interpolation=self.mode_interpolation)
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_use_color_sampling(self, use_color_sampling):
+        self.use_color_sampling = use_color_sampling
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_use_depth_sampling(self, use_depth_sampling):
+        self.use_depth_sampling = use_depth_sampling
 
         success = True
         reason = ""

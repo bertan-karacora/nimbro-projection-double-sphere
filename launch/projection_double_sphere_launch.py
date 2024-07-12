@@ -21,6 +21,8 @@ launch_args = [
         choices=["nearest", "linear", "bilinear", "bicubic", "trilinear", "area", "nearest-exact"],
         default_value="nearest",
     ),
+    DeclareLaunchArgument("projection_use_depth_sampling", description="Usage of depth sampling", choices=["True", "False"], default_value="True"),
+    DeclareLaunchArgument("projection_use_color_sampling", description="Usage of color sampling", choices=["True", "False"], default_value="True"),
     DeclareLaunchArgument("projection_use_knn_interpolation", description="Usage of knn interpolation", choices=["True", "False"], default_value="True"),
 ]
 
@@ -44,6 +46,8 @@ node = Node(
             "factor_downsampling": LaunchConfiguration("projection_factor_downsampling"),
             "k_knn": LaunchConfiguration("projection_k_knn"),
             "mode_interpolation": LaunchConfiguration("projection_mode_interpolation"),
+            "use_depth_sampling": LaunchConfiguration("projection_use_depth_sampling"),
+            "use_color_sampling": LaunchConfiguration("projection_use_color_sampling"),
             "use_knn_interpolation": LaunchConfiguration("projection_use_knn_interpolation"),
         }
     ],
