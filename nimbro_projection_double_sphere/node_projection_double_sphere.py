@@ -114,9 +114,9 @@ class NodeProjectionDoubleSphere(Node):
         # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
         # self.synchronizer.registerCallback(self.on_messages_received_callback)
 
-        self.cache_image = Cache(self.subscriber_image, 15)
-        self.cache_info = Cache(self.subscriber_info, 15)
-        self.cache_points = Cache(self.subscriber_points, 15)
+        self.cache_image = Cache(self.subscriber_image, 10)
+        self.cache_info = Cache(self.subscriber_info, 10)
+        self.cache_points = Cache(self.subscriber_points, 10)
 
         self.cache_image.registerCallback(self.on_message_image_received_callback)
         self.cache_points.registerCallback(self.on_message_points_received_callback)
@@ -267,7 +267,7 @@ class NodeProjectionDoubleSphere(Node):
             self.lock.release()
             return
         self.cache_times_points_message += [time_points]
-        self.cache_times_points_message = self.cache_times_points_message[-15:]
+        self.cache_times_points_message = self.cache_times_points_message[-10:]
 
         self.lock.release()
 
@@ -295,7 +295,7 @@ class NodeProjectionDoubleSphere(Node):
         image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
         self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
 
-        # self.get_logger().info(f"Offset after publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
+        # self.get_logger().info(f"Time offset from pointcloud message after publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
     def _init_parameters(self):
         self.add_on_set_parameters_callback(self.handler_parameters.parameter_callback)
