@@ -11,7 +11,7 @@ launch_args = [
     DeclareLaunchArgument("projection_topic_points", description="Name of the pointcloud topic (for subscriber)", default_value="/ouster/points"),
     DeclareLaunchArgument("projection_topic_projected_depth", description="Name of the projected depth topic (for publisher)", default_value="/camera_ids/projected/depth/image"),
     DeclareLaunchArgument("projection_topic_projected_points", description="Name of the colored pointcloud topic (for publisher)", default_value="/ouster/projected/points"),
-    DeclareLaunchArgument("projection_slop_synchronizer", description="Maximum time disparity between associated image and pointcloud messages", default_value="0.1"),
+    DeclareLaunchArgument("projection_slop_synchronizer", description="Maximum time disparity between associated image and pointcloud messages", default_value="0.5"),
     DeclareLaunchArgument("projection_color_invalid", description="Rgb color given to invalid points", default_value="(255, 87, 51)"),
     DeclareLaunchArgument("projection_factor_downsampling", description="Downsampling factor used with knn interpolation", default_value="8"),
     DeclareLaunchArgument("projection_k_knn", description="Number of neighbors used with knn interpolation", default_value="1"),

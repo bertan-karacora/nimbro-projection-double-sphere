@@ -209,7 +209,6 @@ class NodeProjectionDoubleSphere(Node):
 
         return image_depth
 
-    # Apparently, messages are received in correct order already (based on a few inspected samples), so this is not necessary
     def get_newest_element_before_time(self, cache, time_before):
         """Custom function to replace cache.getElemBeforeTime which does not order"""
         message_newest_before = None
@@ -234,21 +233,25 @@ class NodeProjectionDoubleSphere(Node):
         message_image = self.cache_image.getElemBeforeTime(time_message) if message_image is None else message_image
         message_info = self.cache_info.getElemBeforeTime(time_message) if message_info is None else message_info
 
+        # Apparently, messages are received in correct order already (based on a few inspected samples), so this is not necessary
         # message_points = self.get_newest_element_before_time(self.cache_points, time_message) if message_points is None else message_points
         # message_image = self.get_newest_element_before_time(self.cache_image, time_message) if message_image is None else message_image
         # message_info = self.get_newest_element_before_time(self.cache_info, time_message) if message_info is None else message_info
-
-        # self.get_logger().debug(f"Points: {[time.nanoseconds / 1_000_000_000 for time in self.cache_points.cache_times]}")
-        # self.get_logger().debug(f"Image: {[time.nanoseconds / 1_000_000_000 for time in self.cache_image.cache_times]}")
 
         if message_info is None or message_image is None or message_points is None:
             self.get_logger().debug(f"Cache empty")
             return
 
         time_image = Time.from_msg(message_image.header.stamp)
-        time_info = Time.from_msg(message_info.header.stamp)
+        # time_info = Time.from_msg(message_info.header.stamp)
         time_points = Time.from_msg(message_points.header.stamp)
 
+        # self.get_logger().debug(f"Points: {[time.nanoseconds / 1_000_000_000 for time in self.cache_points.cache_times]}")
+        # self.get_logger().debug(f"Image: {[time.nanoseconds / 1_000_000_000 for time in self.cache_image.cache_times]}")
+        # self.get_logger().debug(f"Selected point: {time_points}")
+        # self.get_logger().debug(f"Selected image: {time_image}")
+
+        # Let's disable this until it is actually useful
         # if time_image != time_info:
         #     self.get_logger().info("Image and info topic stamps unequal")
         #     return
@@ -259,14 +262,10 @@ class NodeProjectionDoubleSphere(Node):
             return
 
         self.lock.acquire()
-
         if any(time_points == time_cached for time_cached in self.cache_times_points_message):
             self.get_logger().debug(f"Messages skipped because the pointcloud has been used already")
             self.lock.release()
             return
-
-        # self.get_logger().info(f"Offset1: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
-
         self.cache_times_points_message += [time_points]
         self.cache_times_points_message = self.cache_times_points_message[-15:]
 
@@ -287,8 +286,6 @@ class NodeProjectionDoubleSphere(Node):
 
         model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info)
         coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True)
-
-        # self.get_logger().info(f"Offset before publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
 
         pointcloud_colored, offset = self.compute_pointcloud_colored(coords_uv_points, images, pointcloud, mask_valid)
         self.publish_points(message_points, pointcloud_colored, offset)
