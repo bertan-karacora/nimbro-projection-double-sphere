@@ -319,6 +319,8 @@ class NodeProjectionDoubleSphere(Node):
         self._init_parameter_factor_downsampling()
         self._init_parameter_k_knn()
         self._init_parameter_mode_interpolation()
+        self._init_parameter_use_color_sampling()
+        self._init_parameter_use_depth_sampling()
         self._init_parameter_use_knn_interpolation()
 
         self.handler_parameters.all_declared()
