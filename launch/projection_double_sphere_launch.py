@@ -23,6 +23,7 @@ launch_args = [
     ),
     DeclareLaunchArgument("projection_use_depth_sampling", description="Usage of depth sampling", choices=["True", "False"], default_value="True"),
     DeclareLaunchArgument("projection_use_color_sampling", description="Usage of color sampling", choices=["True", "False"], default_value="True"),
+    DeclareLaunchArgument("projection_use_service_only", description="Usage of service-only mode", choices=["True", "False"], default_value="False"),
     DeclareLaunchArgument("projection_use_knn_interpolation", description="Usage of knn interpolation", choices=["True", "False"], default_value="True"),
 ]
 
@@ -48,6 +49,7 @@ node = Node(
             "mode_interpolation": LaunchConfiguration("projection_mode_interpolation"),
             "use_depth_sampling": LaunchConfiguration("projection_use_depth_sampling"),
             "use_color_sampling": LaunchConfiguration("projection_use_color_sampling"),
+            "use_service_only": LaunchConfiguration("projection_use_service_only"),
             "use_knn_interpolation": LaunchConfiguration("projection_use_knn_interpolation"),
         }
     ],

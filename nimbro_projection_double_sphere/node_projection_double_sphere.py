@@ -1,4 +1,3 @@
-import copy
 import threading
 
 import numpy as np
@@ -13,10 +12,12 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, ReliabilityPolicy, QoSProfile
 from rcl_interfaces.msg import FloatingPointRange, IntegerRange, ParameterDescriptor, ParameterType
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
+from std_msgs.msg import Header
 from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
+from nimbro_interfaces import ProjectDome, ColorizePoints
 import nimbro_utils.compat.point_cloud2 as point_cloud2
 from nimbro_utils.parameter_handler import ParameterHandler
 from nimbro_utils.tf_oracle import TFOracle
@@ -27,11 +28,21 @@ from nimbro_projection_double_sphere.sampler_depth import SamplerDepth
 
 
 class NodeProjectionDoubleSphere(Node):
+    model_double_sphere_default = ModelDoubleSphere(
+        xi=-0.2996439614293713,
+        alpha=0.5537226081641069,
+        fx=571.4448814063372,
+        fy=570.6090733170088,
+        cx=1334.1674886529015,
+        cy=985.4219057464759,
+        shape_image=(-1, 1920, 2556),
+    )
+
     def __init__(
         self,
         name_frame_camera="camera_ids_link",
         name_frame_lidar="os_sensor_link",
-        slop_synchronizer=0.05,
+        slop_synchronizer=0.5,
         topic_image="/camera_ids/image_color",
         topic_info="/camera_ids/camera_info",
         topic_projected_depth="/camera_ids/projected/depth/image",
@@ -41,6 +52,7 @@ class NodeProjectionDoubleSphere(Node):
         factor_downsampling=8,
         use_color_sampling=True,
         use_depth_sampling=True,
+        use_service_only=False,
         use_knn_interpolation=True,
         k_knn=1,
         mode_interpolation="nearest",
@@ -64,6 +76,8 @@ class NodeProjectionDoubleSphere(Node):
         self.factor_downsampling = factor_downsampling
         self.sampler_color = None
         self.sampler_depth = None
+        self.service_colorize_points = None
+        self.service_project_dome = None
         self.slop_synchronizer = slop_synchronizer
         self.subscriber_image = None
         self.subscriber_points = None
@@ -78,6 +92,7 @@ class NodeProjectionDoubleSphere(Node):
         self.topic_points = topic_points
         self.use_color_sampling = use_color_sampling
         self.use_depth_sampling = use_depth_sampling
+        self.use_service_only = use_service_only
         self.use_knn_interpolation = use_knn_interpolation
 
         self._init()
@@ -96,6 +111,7 @@ class NodeProjectionDoubleSphere(Node):
 
         self._init_tf_oracle()
         self._init_publishers()
+        self._init_services()
         self._init_subscribers()
 
     def _init_tf_oracle(self):
@@ -110,28 +126,32 @@ class NodeProjectionDoubleSphere(Node):
         self.publisher_points = self.create_publisher(msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
     def _init_subscribers(self):
-        self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-        self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-
-        # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
-        # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
-        # self.synchronizer.registerCallback(self.on_messages_received_callback)
-
-        self.cache_image = Cache(self.subscriber_image, 10)
         self.cache_info = Cache(self.subscriber_info, 10)
-        self.cache_points = Cache(self.subscriber_points, 10)
 
-        self.cache_image.registerCallback(self.on_message_image_received_callback)
-        self.cache_points.registerCallback(self.on_message_points_received_callback)
+        if not self.use_service_only:
+            self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
+            self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
-    def publish_image(self, message_image, image, stamp=None):
-        if stamp is not None:
-            header = copy.copy(message_image.header)
-            header.stamp = stamp
-        else:
-            header = message_image.header
+            # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
+            # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
+            # self.synchronizer.registerCallback(self.on_messages_received_callback)
 
+            self.cache_image = Cache(self.subscriber_image, 10)
+            self.cache_points = Cache(self.subscriber_points, 10)
+
+            if self.use_color_sampling:
+                self.cache_image.registerCallback(self.on_message_image_received_callback)
+            self.cache_points.registerCallback(self.on_message_points_received_callback)
+
+    def _init_services(self):
+        if self.use_service_only:
+            namespace = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
+            self.service_project_dome = self.create_service(ProjectDome, f"{namespace}/project_dome", self.on_service_call_project_dome, callback_group=MutuallyExclusiveCallbackGroup())
+            self.service_colorize_points = self.create_service(ColorizePoints, f"{namespace}/colorize_points", self.on_service_call_colorize_points, callback_group=MutuallyExclusiveCallbackGroup())
+
+    def publish_image(self, image, name_frame, stamp):
+        header = Header(stamp=stamp, frame_id=name_frame)
         message = self.bridge_cv.cv2_to_imgmsg(image, header=header, encoding="mono16")
 
         self.publisher_depth.publish(message)
@@ -213,6 +233,7 @@ class NodeProjectionDoubleSphere(Node):
 
         return image_depth
 
+    # Apparently, messages are received in correct order already (based on a few inspected samples), so this is not necessary
     def get_newest_element_before_time(self, cache, time_before):
         """Custom function to replace cache.getElemBeforeTime which does not order"""
         message_newest_before = None
@@ -234,46 +255,37 @@ class NodeProjectionDoubleSphere(Node):
 
     def on_messages_received_callback(self, time_message, message_points=None, message_image=None, message_info=None):
         message_points = self.cache_points.getElemBeforeTime(time_message) if message_points is None else message_points
-        message_image = self.cache_image.getElemBeforeTime(time_message) if message_image is None else message_image
         message_info = self.cache_info.getElemBeforeTime(time_message) if message_info is None else message_info
+        if self.use_color_sampling:
+            message_image = self.cache_image.getElemBeforeTime(time_message) if message_image is None else message_image
 
-        # Apparently, messages are received in correct order already (based on a few inspected samples), so this is not necessary
-        # message_points = self.get_newest_element_before_time(self.cache_points, time_message) if message_points is None else message_points
-        # message_image = self.get_newest_element_before_time(self.cache_image, time_message) if message_image is None else message_image
-        # message_info = self.get_newest_element_before_time(self.cache_info, time_message) if message_info is None else message_info
-
-        if message_info is None or message_image is None or message_points is None:
+        if message_info is None or (self.use_color_sampling and message_image is None) or message_points is None:
             self.get_logger().debug(f"Cache empty")
             return
 
-        time_image = Time.from_msg(message_image.header.stamp)
-        # time_info = Time.from_msg(message_info.header.stamp)
-        time_points = Time.from_msg(message_points.header.stamp)
+        if self.use_color_sampling:
+            time_image = Time.from_msg(message_image.header.stamp)
+            # time_info = Time.from_msg(message_info.header.stamp)
+            time_points = Time.from_msg(message_points.header.stamp)
 
-        # self.get_logger().debug(f"Points: {[time.nanoseconds / 1_000_000_000 for time in self.cache_points.cache_times]}")
-        # self.get_logger().debug(f"Image: {[time.nanoseconds / 1_000_000_000 for time in self.cache_image.cache_times]}")
-        # self.get_logger().debug(f"Selected point: {time_points}")
-        # self.get_logger().debug(f"Selected image: {time_image}")
+            # Let's disable this until it is actually useful
+            # if time_image != time_info:
+            #     self.get_logger().info("Image and info topic stamps unequal")
+            #     return
 
-        # Let's disable this until it is actually useful
-        # if time_image != time_info:
-        #     self.get_logger().info("Image and info topic stamps unequal")
-        #     return
+            duration_difference = time_points - time_image if time_points > time_image else time_image - time_points
+            if duration_difference > Duration(seconds=self.slop_synchronizer):
+                self.get_logger().debug(f"Image/Info and point-cloud topic stamps difference too big: {duration_difference}")
+                return
 
-        duration_difference = time_points - time_image if time_points > time_image else time_image - time_points
-        if duration_difference > Duration(seconds=self.slop_synchronizer):
-            self.get_logger().debug(f"Image/Info and point-cloud topic stamps difference too big: {duration_difference}")
-            return
-
-        self.lock.acquire()
-        if any(time_points == time_cached for time_cached in self.cache_times_points_message):
-            self.get_logger().debug(f"Messages skipped because the pointcloud has been used already")
+            self.lock.acquire()
+            if any(time_points == time_cached for time_cached in self.cache_times_points_message):
+                self.get_logger().debug(f"Messages skipped because the pointcloud has been used already")
+                self.lock.release()
+                return
+            self.cache_times_points_message += [time_points]
+            self.cache_times_points_message = self.cache_times_points_message[-10:]
             self.lock.release()
-            return
-        self.cache_times_points_message += [time_points]
-        self.cache_times_points_message = self.cache_times_points_message[-10:]
-
-        self.lock.release()
 
         success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
         if not success:
@@ -298,11 +310,74 @@ class NodeProjectionDoubleSphere(Node):
 
         if self.use_depth_sampling:
             # Number of channels unknown
-            self.sampler_depth.shape_image = (-1, message_info.height, message_info.width)
+            self.sampler_depth.shape_image = model_double_sphere.shape_image
             image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
-            self.publish_image(message_image, image_depth, stamp=message_points.header.stamp)
+            self.publish_image(image_depth, name_frame=message_info.header.frame_id, stamp=message_points.header.stamp)
 
-        # self.get_logger().info(f"Time offset from pointcloud message after publish: {(self.get_clock().now() - time_points).nanoseconds / 1_000_000_000}")
+    def on_service_call_project_dome(self, request, response):
+        response = ProjectDome.Response(success=True, message="")
+
+        try:
+            message_points = request.points
+
+            time_message = Time.from_msg(message_points.header.stamp)
+            message_info = self.cache_info.getElemBeforeTime(time_message)
+
+            success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
+            if not success:
+                raise RuntimeError("Failed to transform points")
+
+            pointcloud = point_cloud2.read_points(message_points, skip_nans=True)
+            points = self.points2tensor(pointcloud)
+
+            model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info) if message_info is not None else self.model_double_sphere_default
+            coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True)
+
+            self.sampler_depth.shape_image = model_double_sphere.shape_image
+            image_depth = self.compute_depth_image(coords_uv_points, points, mask_valid)
+
+            header = Header(stamp=message_points.header.stamp, frame_id=message_info.header.frame_id if message_info is not None else self.name_frame_camera)
+            response.image = self.bridge_cv.cv2_to_imgmsg(image_depth, header=header, encoding="mono16")
+        except Exception as e:
+            response.success = False
+            response.message = f"{e}"
+            self.get_logger().error(f"Service: {response.message[:-1]}")
+
+        return response
+
+    def on_service_call_colorize_points(self, request, response):
+        response = ColorizePoints.Response(success=True, message="")
+
+        try:
+            message_points = request.points
+            message_image = request.image
+
+            time_message = Time.from_msg(message_points.header.stamp)
+            message_info = self.cache_info.getElemBeforeTime(time_message)
+
+            success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
+            if not success:
+                raise RuntimeError(f"{message}")
+
+            pointcloud = point_cloud2.read_points(message_points, skip_nans=True)
+            points = self.points2tensor(pointcloud)
+
+            image = self.bridge_cv.imgmsg_to_cv2(message_image, desired_encoding="passthrough")
+            images = self.image2tensor(image)
+
+            model_double_sphere = ModelDoubleSphere.from_camera_info_message(message_info) if message_info is not None else self.model_double_sphere_default
+            coords_uv_points, mask_valid = model_double_sphere.project_points_onto_image(points, use_invalid_coords=True, use_mask_fov=True, use_half_precision=True)
+
+            pointcloud_colored, offset = self.compute_pointcloud_colored(coords_uv_points, images, pointcloud, mask_valid)
+
+            fields = message_points.fields + [PointField(name="rgb", offset=offset, datatype=PointField.UINT32, count=1)]
+            response.points_colored = point_cloud2.create_cloud(message_points.header, fields, pointcloud_colored)
+        except Exception as e:
+            response.success = False
+            response.message = f"{e}"
+            self.get_logger().error(f"Service: {response.message[:-1]}")
+
+        return response
 
     def _init_parameters(self):
         self.add_on_set_parameters_callback(self.handler_parameters.parameter_callback)
@@ -321,6 +396,7 @@ class NodeProjectionDoubleSphere(Node):
         self._init_parameter_mode_interpolation()
         self._init_parameter_use_color_sampling()
         self._init_parameter_use_depth_sampling()
+        self._init_parameter_use_service_only()
         self._init_parameter_use_knn_interpolation()
 
         self.handler_parameters.all_declared()
@@ -486,6 +562,16 @@ class NodeProjectionDoubleSphere(Node):
         self.parameter_descriptors += [descriptor]
         self.declare_parameter(descriptor.name, self.use_depth_sampling, descriptor)
 
+    def _init_parameter_use_service_only(self):
+        descriptor = ParameterDescriptor(
+            name="use_service_only",
+            type=ParameterType.PARAMETER_BOOL,
+            description="Usage of service-only mode",
+            read_only=False,
+        )
+        self.parameter_descriptors += [descriptor]
+        self.declare_parameter(descriptor.name, self.use_service_only, descriptor)
+
     def _init_parameter_use_knn_interpolation(self):
         descriptor = ParameterDescriptor(
             name="use_knn_interpolation",
@@ -613,12 +699,24 @@ class NodeProjectionDoubleSphere(Node):
     def update_use_color_sampling(self, use_color_sampling):
         self.use_color_sampling = use_color_sampling
 
+        self._init_subscribers()
+
         success = True
         reason = ""
         return success, reason
 
     def update_use_depth_sampling(self, use_depth_sampling):
         self.use_depth_sampling = use_depth_sampling
+
+        success = True
+        reason = ""
+        return success, reason
+
+    def update_use_service_only(self, use_service_only):
+        self.use_service_only = use_service_only
+
+        self._init_subscribers()
+        self._init_services()
 
         success = True
         reason = ""
