@@ -125,19 +125,18 @@ class NodeProjectionDoubleSphere(Node):
         self.publisher_points = self.create_publisher(msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
     def _init_subscribers(self):
+        self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
+        self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
+
+        self.cache_points = Cache(self.subscriber_points, 10)
         self.cache_info = Cache(self.subscriber_info, 10)
+        self.cache_image = Cache(self.subscriber_image, 10)
 
         if not self.use_service_only:
-            self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-            self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-
             # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
             # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
             # self.synchronizer.registerCallback(self.on_messages_received_callback)
-
-            self.cache_image = Cache(self.subscriber_image, 10)
-            self.cache_points = Cache(self.subscriber_points, 10)
 
             if self.use_color_sampling:
                 self.cache_image.registerCallback(self.on_message_image_received_callback)
@@ -319,10 +318,8 @@ class NodeProjectionDoubleSphere(Node):
         response = ProjectDome.Response(success=True, message="")
 
         try:
-            message_points = request.points
-
-            time_message = Time.from_msg(message_points.header.stamp)
-            message_info = self.cache_info.getElemBeforeTime(time_message)
+            message_points = request.points if request.points.height == 0 and request.points.width == 0 else self.cache_points.getElemBeforeTime(self.get_clock().now())
+            message_info = self.cache_info.getElemBeforeTime(Time.from_msg(message_points.header.stamp))
 
             success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
             if not success:
@@ -353,11 +350,9 @@ class NodeProjectionDoubleSphere(Node):
         response = ColorizePoints.Response(success=True, message="")
 
         try:
-            message_points = request.points
-            message_image = request.image
-
-            time_message = Time.from_msg(message_points.header.stamp)
-            message_info = self.cache_info.getElemBeforeTime(time_message)
+            message_points = request.points if request.points.height == 0 and request.points.width == 0 else self.cache_points.getElemBeforeTime(self.get_clock().now())
+            message_image = request.image if request.image.height == 0 and request.image.width == 0 else self.cache_image.getElemBeforeTime(self.get_clock().now())
+            message_info = self.cache_info.getElemBeforeTime(Time.from_msg(message_points.header.stamp))
 
             success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
             if not success:
@@ -719,14 +714,12 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_use_service_only(self, use_service_only):
-        self.use_service_only = use_service_only
-
         self.destroy_subscription(self.subscriber_points.sub)
         self.destroy_subscription(self.subscriber_image.sub)
-        self.cache_image = None
-        self.cache_points = None
-        self.subscriber_image = None
-        self.subscriber_points = None
+
+        self.use_service_only = use_service_only
+
+        self._init_subscribers()
 
         success = True
         reason = ""
