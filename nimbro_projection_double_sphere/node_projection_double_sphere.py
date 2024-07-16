@@ -17,7 +17,7 @@ from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
-from nimbro_interfaces import ProjectDome, ColorizePoints
+from nimbro_interfaces.srv import ProjectDome, ColorizePoints
 import nimbro_utils.compat.point_cloud2 as point_cloud2
 from nimbro_utils.parameter_handler import ParameterHandler
 from nimbro_utils.tf_oracle import TFOracle
@@ -121,7 +121,6 @@ class NodeProjectionDoubleSphere(Node):
         self.tf_oracle = TFOracle(self)
 
     def _init_publishers(self):
-        # namespace_topic = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
         self.publisher_depth = self.create_publisher(msg_type=Image, topic=self.topic_projected_depth, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.publisher_points = self.create_publisher(msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
@@ -145,10 +144,10 @@ class NodeProjectionDoubleSphere(Node):
             self.cache_points.registerCallback(self.on_message_points_received_callback)
 
     def _init_services(self):
-        if self.use_service_only:
-            namespace = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
-            self.service_project_dome = self.create_service(ProjectDome, f"{namespace}/project_dome", self.on_service_call_project_dome, callback_group=MutuallyExclusiveCallbackGroup())
-            self.service_colorize_points = self.create_service(ColorizePoints, f"{namespace}/colorize_points", self.on_service_call_colorize_points, callback_group=MutuallyExclusiveCallbackGroup())
+        # TODO: Fix
+        # namespace = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
+        self.service_project_dome = self.create_service(ProjectDome, f"/projection_double_sphere/project_dome", self.on_service_call_project_dome, callback_group=MutuallyExclusiveCallbackGroup())
+        self.service_colorize_points = self.create_service(ColorizePoints, f"/projection_double_sphere/colorize_points", self.on_service_call_colorize_points, callback_group=MutuallyExclusiveCallbackGroup())
 
     def publish_image(self, image, name_frame, stamp):
         header = Header(stamp=stamp, frame_id=name_frame)
@@ -315,6 +314,8 @@ class NodeProjectionDoubleSphere(Node):
             self.publish_image(image_depth, name_frame=message_info.header.frame_id, stamp=message_points.header.stamp)
 
     def on_service_call_project_dome(self, request, response):
+        self.get_logger().debug("on_service_call_project_dome: start")
+
         response = ProjectDome.Response(success=True, message="")
 
         try:
@@ -343,9 +344,12 @@ class NodeProjectionDoubleSphere(Node):
             response.message = f"{e}"
             self.get_logger().error(f"Service: {response.message[:-1]}")
 
+        self.get_logger().debug("on_service_call_project_dome: end")
         return response
 
     def on_service_call_colorize_points(self, request, response):
+        self.get_logger().debug("on_service_call_colorize_points: start")
+
         response = ColorizePoints.Response(success=True, message="")
 
         try:
@@ -377,6 +381,7 @@ class NodeProjectionDoubleSphere(Node):
             response.message = f"{e}"
             self.get_logger().error(f"Service: {response.message[:-1]}")
 
+        self.get_logger().debug("on_service_call_colorize_points: start")
         return response
 
     def _init_parameters(self):
@@ -653,7 +658,8 @@ class NodeProjectionDoubleSphere(Node):
     def update_slop_synchronizer(self, slop_synchronizer):
         self.slop_synchronizer = slop_synchronizer
 
-        self._init_subscribers()
+        # Don't need this if we don't use ApproximateTimesynchronizer
+        # self._init_subscribers()
 
         success = True
         reason = ""
@@ -715,8 +721,12 @@ class NodeProjectionDoubleSphere(Node):
     def update_use_service_only(self, use_service_only):
         self.use_service_only = use_service_only
 
-        self._init_subscribers()
-        self._init_services()
+        self.destroy_subscription(self.subscriber_points.sub)
+        self.destroy_subscription(self.subscriber_image.sub)
+        self.cache_image = None
+        self.cache_points = None
+        self.subscriber_image = None
+        self.subscriber_points = None
 
         success = True
         reason = ""
