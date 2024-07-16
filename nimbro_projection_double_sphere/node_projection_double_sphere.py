@@ -132,10 +132,10 @@ class NodeProjectionDoubleSphere(Node):
         self.cache_info = Cache(self.subscriber_info, 10)
 
         if not self.use_service_only and self.is_initialized:
-            self.get_logger().info("gere")
             # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
             # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
             # self.synchronizer.registerCallback(self.on_messages_received_callback)
+
             self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
             self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
 
