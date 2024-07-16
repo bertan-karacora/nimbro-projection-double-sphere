@@ -79,6 +79,7 @@ class NodeProjectionDoubleSphere(Node):
         self.service_colorize_points = None
         self.service_project_dome = None
         self.slop_synchronizer = slop_synchronizer
+        self.is_initialized = False
         self.subscriber_image = None
         self.subscriber_points = None
         self.tf_broadcaster = None
@@ -112,6 +113,8 @@ class NodeProjectionDoubleSphere(Node):
         self._init_tf_oracle()
         self._init_publishers()
         self._init_services()
+
+        self.is_initialized = True
         self._init_subscribers()
 
     def _init_tf_oracle(self):
@@ -125,18 +128,19 @@ class NodeProjectionDoubleSphere(Node):
         self.publisher_points = self.create_publisher(msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
     def _init_subscribers(self):
-        self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-        self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-        self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
-
-        self.cache_points = Cache(self.subscriber_points, 10)
+        self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
         self.cache_info = Cache(self.subscriber_info, 10)
-        self.cache_image = Cache(self.subscriber_image, 10)
 
-        if not self.use_service_only:
+        if not self.use_service_only and self.is_initialized:
+            self.get_logger().info("gere")
             # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
             # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
             # self.synchronizer.registerCallback(self.on_messages_received_callback)
+            self.subscriber_points = SubscriberFilter(self, PointCloud2, self.topic_points, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
+            self.subscriber_image = SubscriberFilter(self, Image, self.topic_image, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
+
+            self.cache_points = Cache(self.subscriber_points, 10)
+            self.cache_image = Cache(self.subscriber_image, 10)
 
             if self.use_color_sampling:
                 self.cache_image.registerCallback(self.on_message_image_received_callback)
@@ -587,6 +591,7 @@ class NodeProjectionDoubleSphere(Node):
             func_update = getattr(NodeProjectionDoubleSphere, f"update_{parameter.name}")
             success, reason = func_update(self, parameter.value)
         except Exception as e:
+            success = False
             self.get_logger().info(f"Error: {e}")
 
         return success, reason
