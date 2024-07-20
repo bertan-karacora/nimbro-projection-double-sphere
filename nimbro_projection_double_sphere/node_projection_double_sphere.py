@@ -388,8 +388,8 @@ class NodeProjectionDoubleSphere(Node):
         response = ColorizePoints.Response(success=True, message="")
 
         try:
-            message_points = request.points if request.points.height == 0 and request.points.width == 0 else self.cache_points.getElemBeforeTime(self.get_clock().now())
-            message_image = request.image if request.image.height == 0 and request.image.width == 0 else self.cache_image.getElemBeforeTime(self.get_clock().now())
+            message_points = request.points if request.points.height != 0 or request.points.width != 0 else self.cache_points.getElemBeforeTime(self.get_clock().now())
+            message_image = request.image if request.image.height != 0 or request.image.width != 0 else self.cache_image.getElemBeforeTime(self.get_clock().now())
             message_info = self.cache_info.getElemBeforeTime(Time.from_msg(message_points.header.stamp))
 
             success, message, message_points = self.tf_oracle.transform_to_frame(message_points, self.name_frame_camera)
