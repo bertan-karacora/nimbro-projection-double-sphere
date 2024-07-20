@@ -112,8 +112,11 @@ class NodeProjectionDoubleSphere(Node):
         self._init_parameters()
 
         self._init_tf_oracle()
+        self._del_publishers()
         self._init_publishers()
+        self._del_services()
         self._init_services()
+        self._del_subscribers()
         self._init_subscribers()
 
     def _init_tf_oracle(self):
@@ -289,7 +292,6 @@ class NodeProjectionDoubleSphere(Node):
         self.on_messages_received_callback(time_message, message_points=message_points)
 
     def on_messages_received_callback(self, time_message, message_points=None, message_image=None, message_info=None):
-        self.get_logger().info("triggered")
         message_points = self.cache_points.getElemBeforeTime(time_message) if message_points is None else message_points
         message_info = self.cache_info.getElemBeforeTime(time_message) if message_info is None else message_info
         if self.use_color_sampling:
