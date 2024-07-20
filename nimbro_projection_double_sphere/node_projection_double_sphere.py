@@ -71,7 +71,7 @@ class NodeProjectionDoubleSphere(Node):
         self.name_frame_camera = name_frame_camera
         self.name_frame_lidar = name_frame_lidar
         self.publisher_depth = None
-        self.publisher_points_colored = None
+        self.publisher_points = None
         self.profile_qos = None
         self.factor_downsampling = factor_downsampling
         self.sampler_color = None
@@ -81,6 +81,7 @@ class NodeProjectionDoubleSphere(Node):
         self.slop_synchronizer = slop_synchronizer
         self.is_initialized = False
         self.subscriber_image = None
+        self.subscriber_info = None
         self.subscriber_points = None
         self.tf_broadcaster = None
         self.tf_buffer = None
@@ -99,7 +100,7 @@ class NodeProjectionDoubleSphere(Node):
         self._init()
 
     def _init(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lock = threading.Lock()
         self.bridge_cv = CvBridge()
         self.profile_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
@@ -127,6 +128,15 @@ class NodeProjectionDoubleSphere(Node):
         self.publisher_depth = self.create_publisher(msg_type=Image, topic=self.topic_projected_depth, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
         self.publisher_points = self.create_publisher(msg_type=PointCloud2, topic=self.topic_projected_points, qos_profile=self.profile_qos, callback_group=ReentrantCallbackGroup())
 
+    def _del_publishers(self):
+        if self.publisher_depth is not None:
+            self.destroy_publisher(self.publisher_depth)
+            self.publisher_depth = None
+
+        if self.publisher_points is not None:
+            self.destroy_publisher(self.publisher_points)
+            self.publisher_points = None
+
     def _init_subscribers(self):
         self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
         self.cache_info = Cache(self.subscriber_info, 10)
@@ -146,11 +156,36 @@ class NodeProjectionDoubleSphere(Node):
                 self.cache_image.registerCallback(self.on_message_image_received_callback)
             self.cache_points.registerCallback(self.on_message_points_received_callback)
 
+    def _del_subscribers(self):
+        if self.subscriber_info is not None:
+            self.destroy_subscription(self.subscriber_info.sub)
+            self.cache_info = None
+            self.subscriber_info = None
+
+        if self.subscriber_points is not None:
+            self.destroy_subscription(self.subscriber_points.sub)
+            self.cache_points = None
+            self.subscriber_points = None
+
+        if self.subscriber_image is not None:
+            self.destroy_subscription(self.subscriber_image.sub)
+            self.cache_image = None
+            self.subscriber_image = None
+
     def _init_services(self):
         # TODO: Fix
         # namespace = f"{self.get_namespace() if self.get_namespace() != '/' else ''}/{self.get_name()}"
         self.service_project_dome = self.create_service(ProjectDome, f"/projection_double_sphere/project_dome", self.on_service_call_project_dome, callback_group=MutuallyExclusiveCallbackGroup())
         self.service_colorize_points = self.create_service(ColorizePoints, f"/projection_double_sphere/colorize_points", self.on_service_call_colorize_points, callback_group=MutuallyExclusiveCallbackGroup())
+
+    def _del_services(self):
+        if self.service_project_dome is not None:
+            self.destroy_service(self.service_project_dome)
+            self.service_project_dome = None
+
+        if self.service_colorize_points is not None:
+            self.destroy_service(self.service_colorize_points)
+            self.service_colorize_points = None
 
     def publish_image(self, image, name_frame, stamp):
         header = Header(stamp=stamp, frame_id=name_frame)
@@ -256,6 +291,7 @@ class NodeProjectionDoubleSphere(Node):
         self.on_messages_received_callback(time_message, message_points=message_points)
 
     def on_messages_received_callback(self, time_message, message_points=None, message_image=None, message_info=None):
+        self.get_logger().info("triggered")
         message_points = self.cache_points.getElemBeforeTime(time_message) if message_points is None else message_points
         message_info = self.cache_info.getElemBeforeTime(time_message) if message_info is None else message_info
         if self.use_color_sampling:
@@ -611,6 +647,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_topic_image(self, topic_image):
+        self._del_subscribers()
+
         self.topic_image = topic_image
 
         self._init_subscribers()
@@ -620,6 +658,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_topic_info(self, topic_info):
+        self._del_subscribers()
+
         self.topic_info = topic_info
 
         self._init_subscribers()
@@ -629,6 +669,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_topic_points(self, topic_points):
+        self._del_subscribers()
+
         self.topic_points = topic_points
 
         self._init_subscribers()
@@ -638,6 +680,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_topic_projected_depth(self, topic_projected_depth):
+        self._del_publishers()
+
         self.topic_projected_depth = topic_projected_depth
 
         self._init_publishers()
@@ -647,6 +691,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_topic_projected_points(self, topic_projected_points):
+        self._del_publishers()
+
         self.topic_projected_points = topic_projected_points
 
         self._init_publishers()
@@ -703,6 +749,8 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_use_color_sampling(self, use_color_sampling):
+        self._del_subscribers()
+
         self.use_color_sampling = use_color_sampling
 
         self._init_subscribers()
@@ -719,8 +767,7 @@ class NodeProjectionDoubleSphere(Node):
         return success, reason
 
     def update_use_service_only(self, use_service_only):
-        self.destroy_subscription(self.subscriber_points.sub)
-        self.destroy_subscription(self.subscriber_image.sub)
+        self._del_subscribers()
 
         self.use_service_only = use_service_only
 
