@@ -114,8 +114,6 @@ class NodeProjectionDoubleSphere(Node):
         self._init_tf_oracle()
         self._init_publishers()
         self._init_services()
-
-        self.is_initialized = True
         self._init_subscribers()
 
     def _init_tf_oracle(self):
@@ -141,7 +139,7 @@ class NodeProjectionDoubleSphere(Node):
         self.subscriber_info = SubscriberFilter(self, CameraInfo, self.topic_info, qos_profile=self.profile_qos, callback_group=MutuallyExclusiveCallbackGroup())
         self.cache_info = Cache(self.subscriber_info, 10)
 
-        if not self.use_service_only and self.is_initialized:
+        if not self.use_service_only:
             # ApproximateTimeSynchronizer not working as expected. Slop is disregarded and messages are often reused more than once
             # self.synchronizer = ApproximateTimeSynchronizer(fs=[self.subscriber_points, self.subscriber_image, self.subscriber_info], queue_size=3, slop=self.slop_synchronizer)
             # self.synchronizer.registerCallback(self.on_messages_received_callback)
